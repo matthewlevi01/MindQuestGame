@@ -1,0 +1,6 @@
+{
+  "name": "MindQuest",
+  "description": "Adaptive cognitive development gaming platform for children aged 5–16 across six core cognitive domains, featuring age-tailored worlds and a parent analytics portal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
