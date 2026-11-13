@@ -24,27 +24,59 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isVerifiedUser() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true ||
+        (
+          request.auth.token.firebase.sign_in_provider == 'phone' &&
+          request.auth.token.phone_number is string &&
+          request.auth.token.phone_number.size() >= 7 &&
+          request.auth.token.phone_number.size() <= 32
+        )
+      );
+    }
+
     function isVerifiedOwner(parentId) {
-      return isSignedIn()
-        && request.auth.token.email_verified == true
-        && request.auth.uid == parentId;
+      return isVerifiedUser() && request.auth.uid == parentId;
+    }
+
+    function isValidParentContact(data) {
+      return (
+        data.authProvider in ['google', 'password'] &&
+        data.keys().hasAny(['email']) &&
+        data.email is string &&
+        data.email.size() >= 3 &&
+        data.email.size() <= 160 &&
+        request.auth.token.email_verified == true &&
+        data.email == request.auth.token.email &&
+        !data.keys().hasAny(['phoneNumber'])
+      ) || (
+        data.authProvider == 'phone' &&
+        data.keys().hasAny(['phoneNumber']) &&
+        data.phoneNumber is string &&
+        data.phoneNumber.size() >= 7 &&
+        data.phoneNumber.size() <= 32 &&
+        request.auth.token.firebase.sign_in_provider == 'phone' &&
+        data.phoneNumber == request.auth.token.phone_number &&
+        !data.keys().hasAny(['email'])
+      );
     }
 
     function isValidParentAccount(data, parentId) {
       return data.keys().hasAll([
-          'uid', 'name', 'email', 'pin', 'plan',
+          'uid', 'name', 'authProvider', 'pin', 'plan',
           'termsAccepted', 'consentGiven', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'uid', 'name', 'email', 'pin', 'plan',
+          'uid', 'name', 'email', 'phoneNumber', 'authProvider', 'pin', 'plan',
           'termsAccepted', 'consentGiven', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.uid)
         && data.uid == parentId
         && data.uid == request.auth.uid
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
-        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
-        && data.email == request.auth.token.email
+        && data.authProvider is string && data.authProvider.size() >= 5 && data.authProvider.size() <= 16 && data.authProvider in ['google', 'password', 'phone']
+        && isValidParentContact(data)
         && data.pin is string && data.pin.size() >= 4 && data.pin.size() <= 6 && data.pin.matches('^[0-9]{4,6}$')
         && data.plan is string && data.plan.size() >= 4 && data.plan.size() <= 24 && data.plan in ['free', 'family_premium']
         && data.termsAccepted is bool && data.termsAccepted == true
@@ -155,6 +187,7 @@ service cloud.firestore {
         && isVerifiedOwner(parentId)
         && isValidParentAccount(incoming(), parentId)
         && incoming().uid == existing().uid
+        && incoming().authProvider == existing().authProvider
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'pin', 'plan', 'updatedAt']);

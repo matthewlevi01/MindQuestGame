@@ -27,6 +27,7 @@ import {
   createSessionInFirestore,
   deleteChildInFirestore,
   getParentProfile,
+  isFirebaseUserVerified,
   signOutParent,
   subscribeToAuthState,
   subscribeToChildren,
@@ -96,8 +97,11 @@ export default function App() {
   const [newlyAwardedStreakMilestone, setNewlyAwardedStreakMilestone] = useState<StreakMilestone | null>(null);
   const [newlyUnlockedAchievements, setNewlyUnlockedAchievements] = useState<AchievementDefinition[]>([]);
 
-  const isCloudAuthenticated = Boolean(authReady && authUser && parentAccount);
-  const needsParentSignup = Boolean(authReady && authUser && parentProfileChecked && !parentAccount);
+  const userVerified = isFirebaseUserVerified(authUser);
+  const isCloudAuthenticated = Boolean(authReady && authUser && userVerified && parentAccount);
+  const needsParentSignup = Boolean(
+    authReady && authUser && userVerified && parentProfileChecked && !parentAccount
+  );
 
   const loadDemoData = useCallback(() => {
     const loadedProfiles = getChildrenProfiles();
@@ -112,6 +116,12 @@ export default function App() {
   const syncParentAccountForUser = useCallback(
     async (user: User) => {
       setParentProfileChecked(false);
+      if (!isFirebaseUserVerified(user)) {
+        setParentAccount(null);
+        setParentProfileChecked(true);
+        setCurrentView('parent_auth');
+        return;
+      }
       try {
         const cloudParent = await getParentProfile(user.uid);
         setParentAccount(cloudParent);
@@ -119,7 +129,7 @@ export default function App() {
         if (cloudParent) {
           setCurrentView((prev) => (prev === 'parent_auth' ? 'parent_dashboard' : prev));
         } else {
-          // Authenticated via Google but hasn't finished Parent Sign-Up onboarding yet
+          // Authenticated & verified, but hasn't finished Parent Sign-Up onboarding yet
           setCurrentView('parent_auth');
         }
       } catch {
@@ -149,7 +159,7 @@ export default function App() {
 
   // Attach Firestore Real-Time Listeners ONLY when auth is ready & verified parent account exists
   useEffect(() => {
-    if (!authReady || !authUser || !parentAccount) {
+    if (!authReady || !authUser || !userVerified || !parentAccount) {
       return;
     }
 

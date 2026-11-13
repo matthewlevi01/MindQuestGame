@@ -1,8 +1,16 @@
 import {
+  ConfirmationResult,
+  RecaptchaVerifier,
   User,
+  createUserWithEmailAndPassword,
   onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signInWithPhoneNumber,
   signInWithPopup,
   signOut,
+  updateProfile,
 } from 'firebase/auth';
 import {
   collection,
@@ -30,11 +38,14 @@ import {
 import { calculateAge, getDevelopmentalBand } from '../utils/engine';
 
 export type FamilyPlan = 'free' | 'family_premium';
+export type AuthProviderType = 'google' | 'password' | 'phone';
 
 export interface CloudParentAccount {
   uid: string;
   name: string;
-  email: string;
+  email?: string;
+  phoneNumber?: string;
+  authProvider: AuthProviderType;
   pin: string;
   plan: FamilyPlan;
   termsAccepted: boolean;
@@ -124,9 +135,84 @@ function sanitizeAchievements(achievements?: ChildAchievement[]): ChildAchieveme
     }));
 }
 
+export function detectAuthProvider(user: User): AuthProviderType {
+  const providerIds = user.providerData.map((p) => p.providerId);
+  if (providerIds.includes('phone') || (!user.email && Boolean(user.phoneNumber))) {
+    return 'phone';
+  }
+  if (providerIds.includes('password')) {
+    return 'password';
+  }
+  return 'google';
+}
+
+export function isFirebaseUserVerified(user: User | null): boolean {
+  if (!user) return false;
+  if (user.emailVerified) return true;
+  const provider = detectAuthProvider(user);
+  return provider === 'phone' && Boolean(user.phoneNumber);
+}
+
 export async function signInParentWithGoogle(): Promise<User> {
   const result = await signInWithPopup(auth, googleProvider);
   return result.user;
+}
+
+export async function signUpParentWithEmail(
+  email: string,
+  password: string,
+  displayName?: string
+): Promise<User> {
+  const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+  if (displayName && displayName.trim()) {
+    await updateProfile(credential.user, { displayName: displayName.trim().slice(0, 80) });
+  }
+  await sendEmailVerification(credential.user);
+  return credential.user;
+}
+
+export async function signInParentWithEmail(
+  email: string,
+  password: string
+): Promise<User> {
+  const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+  return credential.user;
+}
+
+export async function resendParentVerificationEmail(user: User): Promise<void> {
+  await sendEmailVerification(user);
+}
+
+export async function reloadParentUser(user: User): Promise<User | null> {
+  await user.reload();
+  await user.getIdToken(true);
+  return auth.currentUser;
+}
+
+export async function sendParentPasswordReset(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth, email.trim());
+}
+
+export function createPhoneRecaptchaVerifier(
+  containerOrId: string | HTMLElement,
+  size: 'invisible' | 'normal' = 'invisible'
+): RecaptchaVerifier {
+  return new RecaptchaVerifier(auth, containerOrId, { size });
+}
+
+export async function sendPhoneVerificationCode(
+  phoneNumber: string,
+  verifier: RecaptchaVerifier
+): Promise<ConfirmationResult> {
+  return signInWithPhoneNumber(auth, phoneNumber.trim(), verifier);
+}
+
+export async function confirmPhoneVerificationCode(
+  confirmationResult: ConfirmationResult,
+  code: string
+): Promise<User> {
+  const credential = await confirmationResult.confirm(code.trim());
+  return credential.user;
 }
 
 export async function signOutParent(): Promise<void> {
@@ -147,10 +233,19 @@ export async function getParentProfile(
     const snap = await getDoc(doc(db, 'parents', uid));
     if (!snap.exists()) return null;
     const data = snap.data();
+    const rawProvider = String(data.authProvider || 'google');
+    const authProvider: AuthProviderType =
+      rawProvider === 'phone' || rawProvider === 'password' ? rawProvider : 'google';
+
     return {
       uid: String(data.uid || uid),
       name: String(data.name || 'Guardian'),
-      email: String(data.email || ''),
+      email: typeof data.email === 'string' && data.email.length > 0 ? data.email : undefined,
+      phoneNumber:
+        typeof data.phoneNumber === 'string' && data.phoneNumber.length > 0
+          ? data.phoneNumber
+          : undefined,
+      authProvider,
       pin: String(data.pin || '1234'),
       plan: data.plan === 'family_premium' ? 'family_premium' : 'free',
       termsAccepted: Boolean(data.termsAccepted),
@@ -166,7 +261,9 @@ export async function getParentProfile(
 export async function createParentProfile(input: {
   uid: string;
   name: string;
-  email: string;
+  authProvider: AuthProviderType;
+  email?: string;
+  phoneNumber?: string;
   pin: string;
   plan: FamilyPlan;
   termsAccepted: boolean;
@@ -174,28 +271,42 @@ export async function createParentProfile(input: {
 }): Promise<CloudParentAccount> {
   const cleanUid = sanitizeId(input.uid, 'parent');
   const cleanName = input.name.trim().slice(0, 80) || 'MindQuest Guardian';
-  const cleanEmail = input.email.trim().slice(0, 160);
   const cleanPin = /^[0-9]{4,6}$/.test(input.pin.trim()) ? input.pin.trim() : '1234';
   const cleanPlan: FamilyPlan = input.plan === 'family_premium' ? 'family_premium' : 'free';
 
+  const payload: Record<string, unknown> = {
+    uid: cleanUid,
+    name: cleanName,
+    authProvider: input.authProvider,
+    pin: cleanPin,
+    plan: cleanPlan,
+    termsAccepted: true,
+    consentGiven: true,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  let cleanEmail: string | undefined;
+  let cleanPhone: string | undefined;
+
+  if (input.authProvider === 'phone') {
+    cleanPhone = (input.phoneNumber || '').trim().slice(0, 32);
+    payload.phoneNumber = cleanPhone;
+  } else {
+    cleanEmail = (input.email || '').trim().slice(0, 160);
+    payload.email = cleanEmail;
+  }
+
   const path = `parents/${cleanUid}`;
   try {
-    await setDoc(doc(db, 'parents', cleanUid), {
-      uid: cleanUid,
-      name: cleanName,
-      email: cleanEmail,
-      pin: cleanPin,
-      plan: cleanPlan,
-      termsAccepted: true,
-      consentGiven: true,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+    await setDoc(doc(db, 'parents', cleanUid), payload);
 
     return {
       uid: cleanUid,
       name: cleanName,
       email: cleanEmail,
+      phoneNumber: cleanPhone,
+      authProvider: input.authProvider,
       pin: cleanPin,
       plan: cleanPlan,
       termsAccepted: true,

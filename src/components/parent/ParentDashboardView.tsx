@@ -129,6 +129,8 @@ export const ParentDashboardView: React.FC<ParentDashboardViewProps> = ({
               uid: parentAccount.uid,
               name: parentAccount.name,
               email: parentAccount.email,
+              phoneNumber: parentAccount.phoneNumber,
+              authProvider: parentAccount.authProvider,
               plan: parentAccount.plan,
             },
             children: childrenList,
@@ -256,7 +258,7 @@ export const ParentDashboardView: React.FC<ParentDashboardViewProps> = ({
               </div>
               <span className="text-xs text-black font-medium">
                 {parentAccount
-                  ? `Signed in as ${parentAccount.email}`
+                  ? `Signed in as ${parentAccount.email || parentAccount.phoneNumber || parentAccount.name}`
                   : 'Cognitive Practice Oversight & Insights'}
               </span>
             </div>
@@ -1136,7 +1138,7 @@ export const ParentDashboardView: React.FC<ParentDashboardViewProps> = ({
                         Guardian Cloud Account &amp; Parent PIN
                       </h3>
                       <p className="text-xs text-black font-medium">
-                        Signed in as <strong>{parentAccount.email}</strong> · Plan:{' '}
+                        Signed in as <strong>{parentAccount.email || parentAccount.phoneNumber}</strong> · Plan:{' '}
                         <strong className="uppercase">{parentAccount.plan.replace('_', ' ')}</strong>
                       </p>
                     </div>

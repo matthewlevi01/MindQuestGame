@@ -2,15 +2,15 @@
 
 ## 1. Data Invariants
 1. **Default Deny**: All unspecified paths under `/databases/{database}/documents` are strictly denied.
-2. **Strict Verified Parent Identity**: All reads and writes require `request.auth != null` and `request.auth.token.email_verified == true`.
-3. **Owner-Only PII Isolation**: Parent accounts (`/parents/{parentId}`) store guardian PII (`name`, `email`, `pin`) and only allow `get`, `create`, `update`, and `delete` where `request.auth.uid == parentId`. Blanket `list` on `/parents` is strictly forbidden.
+2. **Strict Verified Parent Identity**: All reads and writes require `request.auth != null` and either `request.auth.token.email_verified == true` (Google / Email+Password) OR SMS-verified Phone Authentication (`request.auth.token.firebase.sign_in_provider == 'phone'` with verified `phone_number`).
+3. **Owner-Only PII Isolation**: Parent accounts (`/parents/{parentId}`) store guardian PII (`name`, `email` or `phoneNumber`, `pin`) matched strictly to `request.auth.token`, and only allow `get`, `create`, `update`, and `delete` where `request.auth.uid == parentId`. Blanket `list` on `/parents` is strictly forbidden.
 4. **Master Gate Relational Sync**: Every sub-collection (`/parents/{parentId}/children/{childId}` and `/parents/{parentId}/sessions/{sessionId}`) verifies the existence and ownership of the parent `/parents/{parentId}` document via `get()` / `exists()` on single-document operations, and validates `resource.data.parentId == request.auth.uid` on `list` queries without invoking `get()`/`exists()` inside `allow list`.
-5. **Immutable Ownership & Timestamps**: `uid`, `parentId`, and `createdAt` are immutable after creation. All `createdAt` and `updatedAt` timestamps must equal `request.time`.
+5. **Immutable Ownership & Timestamps**: `uid`, `parentId`, `authProvider`, and `createdAt` are immutable after creation. All `createdAt` and `updatedAt` timestamps must equal `request.time`.
 6. **Child Safety & Resource Bounds**: Every string field has strict `.size()` bounds, IDs match `^[a-zA-Z0-9_\-]+$`, arrays (`streakBadges`, `achievements`, `allowedFocusAreas`) enforce strict upper bounds, and shadow/ghost fields are blocked via `keys().hasOnly(...)`.
 
 ## 2. Adversarial "Dirty Dozen" Attack Payloads (Expected: PERMISSION_DENIED)
 1. **Cross-Parent Read Spoofing**: User B (`uid: "userB"`) tries `get(/parents/userA)` -> DENIED (`uid != parentId`).
-2. **Unverified Email Bypass**: User with `email_verified: false` attempts `create` on `/parents/{uid}` -> DENIED.
+2. **Unverified Email / Spoofed Phone Bypass**: Email/Password user with `email_verified: false` or Phone user spoofing a mismatched `phoneNumber`/`email` attempts `create` on `/parents/{uid}` -> DENIED.
 3. **Collection Scraping List**: Authenticated user runs `list` on `/parents` -> DENIED (`allow list: if false`).
 4. **UID Hijacking on Create**: User B sets `parentId: "userA"` in `/parents/userB/children/c1` -> DENIED (`data.parentId == request.auth.uid` fails).
 5. **Ghost Field / Privilege Escalation**: Payload includes `isAdmin: true` or `role: "superadmin"` -> DENIED (`keys().hasOnly(...)` fails).

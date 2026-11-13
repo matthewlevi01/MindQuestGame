@@ -21,9 +21,20 @@
         "email": {
           "type": "string",
           "format": "email",
-          "description": "Verified parent email address.",
+          "description": "Verified parent email address (present for Google and Email/Password providers).",
           "minLength": 3,
           "maxLength": 160
+        },
+        "phoneNumber": {
+          "type": "string",
+          "description": "Verified E.164 parent phone number (present for Phone Authentication).",
+          "minLength": 7,
+          "maxLength": 32
+        },
+        "authProvider": {
+          "type": "string",
+          "description": "Authentication provider used to verify the parent account.",
+          "enum": ["google", "password", "phone"]
         },
         "pin": {
           "type": "string",
@@ -59,7 +70,7 @@
       "required": [
         "uid",
         "name",
-        "email",
+        "authProvider",
         "pin",
         "plan",
         "termsAccepted",
