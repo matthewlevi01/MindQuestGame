@@ -1,5 +1,14 @@
-import { ChildProfile, GameSession, DailyMission, DevelopmentalBand } from '../types';
+import {
+  ChildProfile,
+  GameSession,
+  DevelopmentalBand,
+  LeaderboardEntry,
+  StreakMilestone,
+  AchievementDefinition,
+} from '../types';
 import { calculateAge, getDevelopmentalBand } from './engine';
+import { processDailyActivity, getYesterdayDateString } from './streak';
+import { evaluateAndAwardAchievements } from './achievements';
 
 const STORAGE_KEYS = {
   CHILDREN: 'mindquest_children_profiles_v1',
@@ -49,6 +58,10 @@ const DEFAULT_CHILDREN: ChildProfile[] = [
     dailyLimitMinutes: 20,
     todayMinutesPlayed: 8,
     streakDays: 4,
+    bestStreak: 4,
+    lastActiveDate: getYesterdayDateString(),
+    streakBadges: ['streak_1', 'streak_3'],
+    allowedFocusAreas: ['reading', 'concentration', 'mental_abilities'],
     totalXp: 180,
     level: 3,
     createdAt: '2026-10-15T10:00:00.000Z',
@@ -71,6 +84,10 @@ const DEFAULT_CHILDREN: ChildProfile[] = [
     dailyLimitMinutes: 25,
     todayMinutesPlayed: 14,
     streakDays: 7,
+    bestStreak: 9,
+    lastActiveDate: getYesterdayDateString(),
+    streakBadges: ['streak_1', 'streak_3', 'streak_7'],
+    allowedFocusAreas: ['reading', 'concentration', 'mental_abilities'],
     totalXp: 410,
     level: 5,
     createdAt: '2026-10-15T10:05:00.000Z',
@@ -93,6 +110,10 @@ const DEFAULT_CHILDREN: ChildProfile[] = [
     dailyLimitMinutes: 30,
     todayMinutesPlayed: 18,
     streakDays: 12,
+    bestStreak: 12,
+    lastActiveDate: getYesterdayDateString(),
+    streakBadges: ['streak_1', 'streak_3', 'streak_7'],
+    allowedFocusAreas: ['reading', 'concentration', 'mental_abilities'],
     totalXp: 720,
     level: 8,
     createdAt: '2026-10-15T10:10:00.000Z',
@@ -115,13 +136,16 @@ const DEFAULT_CHILDREN: ChildProfile[] = [
     dailyLimitMinutes: 35,
     todayMinutesPlayed: 22,
     streakDays: 15,
+    bestStreak: 15,
+    lastActiveDate: getYesterdayDateString(),
+    streakBadges: ['streak_1', 'streak_3', 'streak_7', 'streak_14'],
+    allowedFocusAreas: ['reading', 'concentration', 'mental_abilities'],
     totalXp: 1150,
     level: 12,
     createdAt: '2026-10-15T10:15:00.000Z',
   },
 ];
 
-// Realistic historical sessions for Leo to provide realistic parent analytics
 const DEFAULT_SESSIONS: GameSession[] = [
   {
     id: 's-1',
@@ -129,6 +153,7 @@ const DEFAULT_SESSIONS: GameSession[] = [
     gameId: 'memory_pairs',
     gameTitle: 'Picture Pairs & Sequence',
     domain: 'memory',
+    focusArea: 'mental_abilities',
     band: 'senior_explorers',
     timestamp: '2026-11-08T15:30:00.000Z',
     durationSeconds: 150,
@@ -146,6 +171,7 @@ const DEFAULT_SESSIONS: GameSession[] = [
     gameId: 'focus_hunter',
     gameTitle: 'Target Hunter & Rule Switch',
     domain: 'attention',
+    focusArea: 'concentration',
     band: 'senior_explorers',
     timestamp: '2026-11-09T16:10:00.000Z',
     durationSeconds: 180,
@@ -163,6 +189,7 @@ const DEFAULT_SESSIONS: GameSession[] = [
     gameId: 'logic_patterns',
     gameTitle: 'Pattern Detective',
     domain: 'reasoning',
+    focusArea: 'mental_abilities',
     band: 'senior_explorers',
     timestamp: '2026-11-10T14:45:00.000Z',
     durationSeconds: 210,
@@ -180,6 +207,7 @@ const DEFAULT_SESSIONS: GameSession[] = [
     gameId: 'speed_classifier',
     gameTitle: 'Rapid Classifier',
     domain: 'processing_speed',
+    focusArea: 'concentration',
     band: 'senior_explorers',
     timestamp: '2026-11-10T15:00:00.000Z',
     durationSeconds: 90,
@@ -197,6 +225,7 @@ const DEFAULT_SESSIONS: GameSession[] = [
     gameId: 'strategy_route',
     gameTitle: 'Route Planner',
     domain: 'executive_function',
+    focusArea: 'concentration',
     band: 'senior_explorers',
     timestamp: '2026-11-11T10:15:00.000Z',
     durationSeconds: 240,
@@ -208,13 +237,13 @@ const DEFAULT_SESSIONS: GameSession[] = [
     xpEarned: 35,
     completed: true,
   },
-  // Sessions for Maya
   {
     id: 's-m1',
     childId: 'child-maya',
     gameId: 'memory_pairs',
     gameTitle: 'Picture Pairs & Sequence',
     domain: 'memory',
+    focusArea: 'mental_abilities',
     band: 'young_explorers',
     timestamp: '2026-11-10T11:00:00.000Z',
     durationSeconds: 120,
@@ -227,29 +256,12 @@ const DEFAULT_SESSIONS: GameSession[] = [
     completed: true,
   },
   {
-    id: 's-m2',
-    childId: 'child-maya',
-    gameId: 'focus_hunter',
-    gameTitle: 'Target Hunter & Rule Switch',
-    domain: 'attention',
-    band: 'young_explorers',
-    timestamp: '2026-11-11T09:30:00.000Z',
-    durationSeconds: 130,
-    difficultyLevel: 1,
-    accuracy: 85,
-    responseTimeMs: 820,
-    mistakes: 2,
-    hintsUsed: 0,
-    xpEarned: 20,
-    completed: true,
-  },
-  // Sessions for Sam (Discoverer)
-  {
     id: 's-s1',
     childId: 'child-sam',
     gameId: 'focus_hunter',
     gameTitle: 'Target Hunter & Rule Switch',
     domain: 'cognitive_flexibility',
+    focusArea: 'concentration',
     band: 'discoverers',
     timestamp: '2026-11-10T17:00:00.000Z',
     durationSeconds: 190,
@@ -259,41 +271,6 @@ const DEFAULT_SESSIONS: GameSession[] = [
     mistakes: 1,
     hintsUsed: 0,
     xpEarned: 30,
-    completed: true,
-  },
-  {
-    id: 's-s2',
-    childId: 'child-sam',
-    gameId: 'strategy_route',
-    gameTitle: 'Route Planner',
-    domain: 'executive_function',
-    band: 'discoverers',
-    timestamp: '2026-11-11T12:00:00.000Z',
-    durationSeconds: 220,
-    difficultyLevel: 3,
-    accuracy: 90,
-    responseTimeMs: 1600,
-    mistakes: 1,
-    hintsUsed: 0,
-    xpEarned: 30,
-    completed: true,
-  },
-  // Sessions for Alex (Master)
-  {
-    id: 's-a1',
-    childId: 'child-alex',
-    gameId: 'logic_patterns',
-    gameTitle: 'Pattern Detective',
-    domain: 'reasoning',
-    band: 'masters',
-    timestamp: '2026-11-10T20:10:00.000Z',
-    durationSeconds: 240,
-    difficultyLevel: 4,
-    accuracy: 96,
-    responseTimeMs: 1400,
-    mistakes: 1,
-    hintsUsed: 0,
-    xpEarned: 35,
     completed: true,
   },
 ];
@@ -320,9 +297,11 @@ export function saveParentAccount(account: ParentAccount): void {
 export function getChildrenProfiles(): ChildProfile[] {
   if (typeof window === 'undefined') return DEFAULT_CHILDREN;
   const stored = localStorage.getItem(STORAGE_KEYS.CHILDREN);
+  const allSessions = getAllSessions();
   if (!stored) {
-    localStorage.setItem(STORAGE_KEYS.CHILDREN, JSON.stringify(DEFAULT_CHILDREN));
-    return DEFAULT_CHILDREN;
+    const initialized = DEFAULT_CHILDREN.map((c) => evaluateAndAwardAchievements(c, allSessions).updatedChild);
+    localStorage.setItem(STORAGE_KEYS.CHILDREN, JSON.stringify(initialized));
+    return initialized;
   }
   try {
     const list: ChildProfile[] = JSON.parse(stored);
@@ -330,7 +309,16 @@ export function getChildrenProfiles(): ChildProfile[] {
     return list.map((c) => {
       const age = calculateAge(c.birthDate);
       const band = getDevelopmentalBand(age);
-      return { ...c, calculatedAge: age, band };
+      const baseChild: ChildProfile = {
+        ...c,
+        calculatedAge: age,
+        band,
+        bestStreak: c.bestStreak || c.streakDays || 1,
+        streakBadges: c.streakBadges || ['streak_1'],
+        achievements: c.achievements || [],
+        allowedFocusAreas: c.allowedFocusAreas || ['reading', 'concentration', 'mental_abilities'],
+      };
+      return evaluateAndAwardAchievements(baseChild, allSessions).updatedChild;
     });
   } catch {
     return DEFAULT_CHILDREN;
@@ -345,6 +333,10 @@ export function saveChildProfile(child: ChildProfile): void {
     ...child,
     calculatedAge: calculateAge(child.birthDate),
     band: getDevelopmentalBand(calculateAge(child.birthDate)),
+    bestStreak: Math.max(child.bestStreak || 0, child.streakDays || 1),
+    streakBadges: child.streakBadges || ['streak_1'],
+    achievements: child.achievements || [],
+    allowedFocusAreas: child.allowedFocusAreas || ['reading', 'concentration', 'mental_abilities'],
   };
 
   if (index >= 0) {
@@ -360,7 +352,6 @@ export function deleteChildProfile(childId: string): void {
   const list = getChildrenProfiles().filter((c) => c.id !== childId);
   localStorage.setItem(STORAGE_KEYS.CHILDREN, JSON.stringify(list));
 
-  // Also delete their sessions
   const sessions = getAllSessions().filter((s) => s.childId !== childId);
   localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
 }
@@ -383,22 +374,56 @@ export function getChildSessions(childId: string): GameSession[] {
   return getAllSessions().filter((s) => s.childId === childId);
 }
 
-export function recordGameSession(session: GameSession): void {
-  if (typeof window === 'undefined') return;
+/**
+ * Records a completed game session and updates daily streak & progression
+ */
+export function recordGameSession(session: GameSession): {
+  streakIncremented: boolean;
+  milestoneAwarded?: StreakMilestone;
+  achievementsAwarded: AchievementDefinition[];
+} {
+  if (typeof window === 'undefined') {
+    return { streakIncremented: false, achievementsAwarded: [] };
+  }
   const sessions = getAllSessions();
   sessions.unshift(session);
   localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
 
-  // Update child minutes and XP
+  // Update child minutes, XP, Daily Streak, and Domain Mastery Achievements
   const children = getChildrenProfiles();
   const child = children.find((c) => c.id === session.childId);
+
+  let streakResult: {
+    streakIncremented: boolean;
+    milestoneAwarded?: StreakMilestone;
+    achievementsAwarded: AchievementDefinition[];
+  } = {
+    streakIncremented: false,
+    achievementsAwarded: [],
+  };
+
   if (child) {
     const minutes = Math.ceil(session.durationSeconds / 60);
     child.todayMinutesPlayed += minutes;
     child.totalXp += session.xpEarned;
     child.level = Math.floor(child.totalXp / 100) + 1;
-    saveChildProfile(child);
+
+    // Process daily streak
+    const processed = processDailyActivity(child);
+
+    // Evaluate cognitive domain mastery achievements
+    const evalResult = evaluateAndAwardAchievements(processed.updatedChild, sessions);
+
+    streakResult = {
+      streakIncremented: processed.streakIncremented,
+      milestoneAwarded: processed.milestoneAwarded,
+      achievementsAwarded: evalResult.newlyUnlocked,
+    };
+
+    saveChildProfile(evalResult.updatedChild);
   }
+
+  return streakResult;
 }
 
 export function getActiveChildId(): string {
@@ -431,4 +456,115 @@ export function exportDataAsJSON(): string {
     null,
     2
   );
+}
+
+/**
+ * Generates leaderboard entries for the family and world explorer guild
+ */
+export function getLeaderboardEntries(
+  currentChildId: string,
+  childrenOverride?: ChildProfile[]
+): {
+  familyLeaderboard: LeaderboardEntry[];
+  worldGuildLeaderboard: LeaderboardEntry[];
+} {
+  const children =
+    childrenOverride && childrenOverride.length > 0 ? childrenOverride : getChildrenProfiles();
+
+  const familyLeaderboard: LeaderboardEntry[] = children
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      avatar: c.avatar,
+      band: c.band,
+      level: c.level,
+      totalXp: c.totalXp,
+      streakDays: c.streakDays || 1,
+      bestStreak: c.bestStreak || c.streakDays || 1,
+      bestDomain: 'Cognitive Explorer',
+      badgesCount: (c.streakBadges || []).length,
+      isCurrentChild: c.id === currentChildId,
+      specialBadge:
+        c.totalXp > 800 ? 'Mastermind 👑' : c.streakDays >= 7 ? 'Weekly Dynamo ⚡' : 'Rising Star ⭐',
+    }))
+    .sort((a, b) => b.totalXp - a.totalXp);
+
+  // Friendly world guild explorer peers (PRD Section 13 safe explorer league)
+  const worldGuildPeers: LeaderboardEntry[] = [
+    {
+      id: 'peer-1',
+      name: 'Oliver Owl',
+      avatar: 'owl',
+      band: 'young_explorers',
+      level: 7,
+      totalXp: 620,
+      streakDays: 8,
+      bestStreak: 10,
+      bestDomain: 'Visual Memory',
+      badgesCount: 3,
+      specialBadge: 'Memory Scout 🦉',
+    },
+    {
+      id: 'peer-2',
+      name: 'Dash the Tiger',
+      avatar: 'tiger',
+      band: 'senior_explorers',
+      level: 9,
+      totalXp: 890,
+      streakDays: 14,
+      bestStreak: 16,
+      bestDomain: 'Mental Mathematics',
+      badgesCount: 4,
+      specialBadge: 'Math Whiz ⚡',
+    },
+    {
+      id: 'peer-3',
+      name: 'Inspector Lynx',
+      avatar: 'detective',
+      band: 'discoverers',
+      level: 11,
+      totalXp: 1040,
+      streakDays: 19,
+      bestStreak: 21,
+      bestDomain: 'Spatial Matrix',
+      badgesCount: 4,
+      specialBadge: 'Spatial Detective 🕵️',
+    },
+    {
+      id: 'peer-4',
+      name: 'Apex Strategist',
+      avatar: 'strategist',
+      band: 'masters',
+      level: 14,
+      totalXp: 1380,
+      streakDays: 24,
+      bestStreak: 30,
+      bestDomain: 'Executive Planning',
+      badgesCount: 5,
+      specialBadge: 'Grandmaster ♟️',
+    },
+  ];
+
+  // Merge current active child into world guild to show their ranking among explorers
+  const activeChild = children.find((c) => c.id === currentChildId) || children[0];
+  const activeEntry: LeaderboardEntry = {
+    id: activeChild.id,
+    name: `${activeChild.name} (You)`,
+    avatar: activeChild.avatar,
+    band: activeChild.band,
+    level: activeChild.level,
+    totalXp: activeChild.totalXp,
+    streakDays: activeChild.streakDays || 1,
+    bestStreak: activeChild.bestStreak || activeChild.streakDays || 1,
+    bestDomain: 'All-Rounder',
+    badgesCount: (activeChild.streakBadges || []).length,
+    isCurrentChild: true,
+    specialBadge: 'Your Explorer 🚀',
+  };
+
+  const worldGuildLeaderboard = [...worldGuildPeers, activeEntry].sort(
+    (a, b) => b.totalXp - a.totalXp
+  );
+
+  return { familyLeaderboard, worldGuildLeaderboard };
 }

@@ -1,0 +1,240 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net: Default deny all reads and writes
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Global Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedOwner(parentId) {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.uid == parentId;
+    }
+
+    function isValidParentAccount(data, parentId) {
+      return data.keys().hasAll([
+          'uid', 'name', 'email', 'pin', 'plan',
+          'termsAccepted', 'consentGiven', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'name', 'email', 'pin', 'plan',
+          'termsAccepted', 'consentGiven', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.uid == parentId
+        && data.uid == request.auth.uid
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.email == request.auth.token.email
+        && data.pin is string && data.pin.size() >= 4 && data.pin.size() <= 6 && data.pin.matches('^[0-9]{4,6}$')
+        && data.plan is string && data.plan.size() >= 4 && data.plan.size() <= 24 && data.plan in ['free', 'family_premium']
+        && data.termsAccepted is bool && data.termsAccepted == true
+        && data.consentGiven is bool && data.consentGiven == true
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAccessibility(acc) {
+      return acc is map
+        && acc.keys().hasAll(['highContrast', 'reducedMotion', 'soundEnabled', 'soundVolume', 'largeText'])
+        && acc.keys().hasOnly(['highContrast', 'reducedMotion', 'soundEnabled', 'soundVolume', 'largeText'])
+        && acc.highContrast is bool
+        && acc.reducedMotion is bool
+        && acc.soundEnabled is bool
+        && acc.soundVolume is number && acc.soundVolume >= 0 && acc.soundVolume <= 1
+        && acc.largeText is bool;
+    }
+
+    function isValidChildProfile(data, parentId, childId) {
+      return data.keys().hasAll([
+          'id', 'parentId', 'name', 'birthDate', 'calculatedAge', 'band',
+          'avatar', 'accessibility', 'dailyLimitMinutes', 'todayMinutesPlayed',
+          'streakDays', 'bestStreak', 'streakBadges', 'achievements',
+          'allowedFocusAreas', 'totalXp', 'level', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'parentId', 'name', 'birthDate', 'calculatedAge', 'band',
+          'avatar', 'accessibility', 'dailyLimitMinutes', 'todayMinutesPlayed',
+          'streakDays', 'bestStreak', 'lastActiveDate', 'streakBadges', 'achievements',
+          'allowedFocusAreas', 'totalXp', 'level', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == childId
+        && isValidId(data.parentId) && data.parentId == parentId && data.parentId == request.auth.uid
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 60
+        && data.birthDate is string && data.birthDate.size() == 10 && data.birthDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.calculatedAge is int && data.calculatedAge >= 3 && data.calculatedAge <= 18
+        && data.band is string && data.band.size() >= 7 && data.band.size() <= 24 && data.band in ['young_explorers', 'senior_explorers', 'discoverers', 'masters']
+        && data.avatar is string && data.avatar.size() >= 1 && data.avatar.size() <= 40
+        && isValidAccessibility(data.accessibility)
+        && data.dailyLimitMinutes is int && data.dailyLimitMinutes >= 5 && data.dailyLimitMinutes <= 120
+        && data.todayMinutesPlayed is int && data.todayMinutesPlayed >= 0 && data.todayMinutesPlayed <= 600
+        && data.streakDays is int && data.streakDays >= 0 && data.streakDays <= 5000
+        && data.bestStreak is int && data.bestStreak >= 0 && data.bestStreak <= 5000
+        && (!data.keys().hasAny(['lastActiveDate']) || (data.lastActiveDate is string && data.lastActiveDate.size() <= 10))
+        && data.streakBadges is list && data.streakBadges.size() <= 20
+        && (data.streakBadges.size() == 0 || (data.streakBadges[0] is string && data.streakBadges[0].size() <= 40))
+        && data.achievements is list && data.achievements.size() <= 30
+        && (data.achievements.size() == 0 || data.achievements[0] is map)
+        && data.allowedFocusAreas is list && data.allowedFocusAreas.size() >= 1 && data.allowedFocusAreas.size() <= 3
+        && data.allowedFocusAreas.hasOnly(['reading', 'concentration', 'mental_abilities'])
+        && data.totalXp is int && data.totalXp >= 0 && data.totalXp <= 10000000
+        && data.level is int && data.level >= 1 && data.level <= 1000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidGameSession(data, parentId, sessionId) {
+      return data.keys().hasAll([
+          'id', 'parentId', 'childId', 'gameId', 'gameTitle', 'domain', 'focusArea',
+          'band', 'timestamp', 'durationSeconds', 'difficultyLevel', 'accuracy',
+          'mistakes', 'hintsUsed', 'xpEarned', 'completed', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'parentId', 'childId', 'gameId', 'gameTitle', 'domain', 'focusArea',
+          'band', 'timestamp', 'durationSeconds', 'difficultyLevel', 'accuracy',
+          'score', 'timedOut', 'responseTimeMs', 'mistakes', 'hintsUsed', 'xpEarned',
+          'completed', 'createdAt'
+        ])
+        && isValidId(data.id) && data.id == sessionId
+        && isValidId(data.parentId) && data.parentId == parentId && data.parentId == request.auth.uid
+        && isValidId(data.childId)
+        && data.gameId is string && data.gameId.size() >= 1 && data.gameId.size() <= 64
+        && data.gameTitle is string && data.gameTitle.size() >= 1 && data.gameTitle.size() <= 120
+        && data.domain is string && data.domain.size() >= 3 && data.domain.size() <= 32 && data.domain in [
+          'memory', 'attention', 'reasoning', 'processing_speed',
+          'cognitive_flexibility', 'executive_function', 'mental_math',
+          'spatial_thinking', 'reading_comprehension'
+        ]
+        && data.focusArea is string && data.focusArea.size() >= 5 && data.focusArea.size() <= 24 && data.focusArea in ['reading', 'concentration', 'mental_abilities']
+        && data.band is string && data.band.size() >= 7 && data.band.size() <= 24 && data.band in ['young_explorers', 'senior_explorers', 'discoverers', 'masters']
+        && data.timestamp is string && data.timestamp.size() >= 1 && data.timestamp.size() <= 40
+        && data.durationSeconds is number && data.durationSeconds >= 0 && data.durationSeconds <= 7200
+        && data.difficultyLevel is int && data.difficultyLevel >= 1 && data.difficultyLevel <= 5
+        && data.accuracy is number && data.accuracy >= 0 && data.accuracy <= 100
+        && (!data.keys().hasAny(['score']) || (data.score is number && data.score >= 0 && data.score <= 10000))
+        && (!data.keys().hasAny(['timedOut']) || data.timedOut is bool)
+        && (!data.keys().hasAny(['responseTimeMs']) || (data.responseTimeMs is number && data.responseTimeMs >= 0 && data.responseTimeMs <= 600000))
+        && data.mistakes is int && data.mistakes >= 0 && data.mistakes <= 1000
+        && data.hintsUsed is int && data.hintsUsed >= 0 && data.hintsUsed <= 1000
+        && data.xpEarned is int && data.xpEarned >= 0 && data.xpEarned <= 10000
+        && data.completed is bool
+        && data.createdAt is timestamp;
+    }
+
+    // 3. Parent Guardian Document (Strict Owner PII Isolation)
+    match /parents/{parentId} {
+      allow get: if isValidId(parentId) && isVerifiedOwner(parentId);
+      allow list: if false;
+
+      allow create: if isValidId(parentId)
+        && isVerifiedOwner(parentId)
+        && isValidParentAccount(incoming(), parentId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(parentId)
+        && isVerifiedOwner(parentId)
+        && isValidParentAccount(incoming(), parentId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'pin', 'plan', 'updatedAt']);
+
+      allow delete: if isValidId(parentId) && isVerifiedOwner(parentId);
+
+      // 4. Child Sub-Profiles (Master Gate -> parent doc must exist & match uid)
+      match /children/{childId} {
+        allow get: if isValidId(parentId)
+          && isValidId(childId)
+          && isVerifiedOwner(parentId)
+          && exists(/databases/$(database)/documents/parents/$(parentId));
+
+        allow list: if isValidId(parentId)
+          && isVerifiedOwner(parentId)
+          && resource.data.parentId == request.auth.uid;
+
+        allow create: if isValidId(parentId)
+          && isValidId(childId)
+          && isVerifiedOwner(parentId)
+          && isValidChildProfile(incoming(), parentId, childId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/parents/$(parentId));
+
+        allow update: if isValidId(parentId)
+          && isValidId(childId)
+          && isVerifiedOwner(parentId)
+          && isValidChildProfile(incoming(), parentId, childId)
+          && incoming().id == existing().id
+          && incoming().parentId == existing().parentId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/parents/$(parentId))
+          && (
+            // Action 1: Parent updates profile settings / controls
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'birthDate', 'calculatedAge', 'band', 'avatar',
+              'accessibility', 'dailyLimitMinutes', 'allowedFocusAreas', 'updatedAt'
+            ])
+            ||
+            // Action 2: Gameplay session progression (XP, streaks, achievements, daily minutes)
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'todayMinutesPlayed', 'streakDays', 'bestStreak', 'lastActiveDate',
+              'streakBadges', 'achievements', 'totalXp', 'level', 'updatedAt'
+            ])
+          );
+
+        allow delete: if isValidId(parentId)
+          && isValidId(childId)
+          && isVerifiedOwner(parentId)
+          && exists(/databases/$(database)/documents/parents/$(parentId));
+      }
+
+      // 5. Game Sessions (Immutable historical records scoped to verified parent & existing child)
+      match /sessions/{sessionId} {
+        allow get: if isValidId(parentId)
+          && isValidId(sessionId)
+          && isVerifiedOwner(parentId)
+          && exists(/databases/$(database)/documents/parents/$(parentId));
+
+        allow list: if isValidId(parentId)
+          && isVerifiedOwner(parentId)
+          && resource.data.parentId == request.auth.uid;
+
+        allow create: if isValidId(parentId)
+          && isValidId(sessionId)
+          && isVerifiedOwner(parentId)
+          && isValidGameSession(incoming(), parentId, sessionId)
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/parents/$(parentId))
+          && exists(/databases/$(database)/documents/parents/$(parentId)/children/$(incoming().childId));
+
+        allow update: if false;
+
+        allow delete: if isValidId(parentId)
+          && isValidId(sessionId)
+          && isVerifiedOwner(parentId)
+          && exists(/databases/$(database)/documents/parents/$(parentId));
+      }
+    }
+  }
+}

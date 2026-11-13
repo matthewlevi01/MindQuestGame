@@ -1,162 +1,165 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ChildProfile, GameSession } from '../../types';
 import { soundEngine } from '../../utils/sound';
 import { calculateRewardXp } from '../../utils/engine';
-import { Zap, Clock, Award, ArrowLeft, ArrowRight } from 'lucide-react';
+import { getSpeedThemeBatch, SpeedThemePack } from '../../data/questionBank';
+import { ConfettiOverlay } from '../common/ConfettiOverlay';
+import { AmberFailureAlert } from '../common/AmberFailureAlert';
+import { GameTimerSetup, GameTimerHud, formatTimerClock } from '../common/GameTimerBar';
+import { GameProgressBar } from '../common/GameProgressBar';
+import { GameInstructionBox } from '../common/GameInstructionBox';
+import { QuestionSpeakerButton } from '../common/QuestionSpeakerButton';
+import { speakChildQuestion, stopVoice } from '../../utils/voiceService';
+import { Zap, Award, ArrowLeft, ArrowRight, Clock } from 'lucide-react';
 
 interface BrainSpeedGameProps {
   child: ChildProfile;
   difficulty: number;
+  loginSessionId?: number;
   onFinish: (session: GameSession) => void;
   onExit: () => void;
 }
 
-interface StimulusItem {
-  display: string;
-  subtext?: string;
-  category: 'left' | 'right';
-}
-
-const CATEGORY_CONFIGS = {
-  young_explorers: {
-    title: 'Animal or Vehicle?',
-    leftLabel: 'Animal 🐾',
-    rightLabel: 'Vehicle 🚗',
-    items: [
-      { display: '🐶 Dog', category: 'left' },
-      { display: '🚗 Car', category: 'right' },
-      { display: '🐱 Cat', category: 'left' },
-      { display: '✈️ Airplane', category: 'right' },
-      { display: '🐰 Rabbit', category: 'left' },
-      { display: '🚲 Bicycle', category: 'right' },
-      { display: '🦁 Lion', category: 'left' },
-      { display: '🚂 Train', category: 'right' },
-      { display: '🐼 Panda', category: 'left' },
-      { display: '🚀 Rocket', category: 'right' },
-    ] as StimulusItem[],
-  },
-  senior_explorers: {
-    title: 'Odd or Even Number?',
-    leftLabel: 'Odd Number (1, 3, 5)',
-    rightLabel: 'Even Number (2, 4, 6)',
-    items: [
-      { display: '17', category: 'left' },
-      { display: '24', category: 'right' },
-      { display: '9', category: 'left' },
-      { display: '38', category: 'right' },
-      { display: '51', category: 'left' },
-      { display: '42', category: 'right' },
-      { display: '73', category: 'left' },
-      { display: '88', category: 'right' },
-      { display: '65', category: 'left' },
-      { display: '100', category: 'right' },
-    ] as StimulusItem[],
-  },
-  discoverers: {
-    title: 'Value Comparison: Less or Greater than 50?',
-    leftLabel: '< 50 (Under)',
-    rightLabel: '> 50 (Over)',
-    items: [
-      { display: '6 × 7', subtext: '= 42', category: 'left' },
-      { display: '8 × 7', subtext: '= 56', category: 'right' },
-      { display: '9 × 5', subtext: '= 45', category: 'left' },
-      { display: '12 × 5', subtext: '= 60', category: 'right' },
-      { display: '15 + 28', subtext: '= 43', category: 'left' },
-      { display: '34 + 29', subtext: '= 63', category: 'right' },
-      { display: '70 - 24', subtext: '= 46', category: 'left' },
-      { display: '90 - 32', subtext: '= 58', category: 'right' },
-    ] as StimulusItem[],
-  },
-  masters: {
-    title: 'Mental Arithmetic & Classification',
-    leftLabel: 'Prime Number',
-    rightLabel: 'Composite Number',
-    items: [
-      { display: '19', category: 'left' },
-      { display: '21', category: 'right' },
-      { display: '31', category: 'left' },
-      { display: '27', category: 'right' },
-      { display: '47', category: 'left' },
-      { display: '49', category: 'right' },
-      { display: '53', category: 'left' },
-      { display: '57', category: 'right' },
-    ] as StimulusItem[],
-  },
-};
+const INTRO_PROMPTS = [
+  'Sort 20 fast challenges using your eyes, brain speed, and arrow keys!',
+  'Beat 20 rapid-fire sorting cards with razor-sharp accuracy!',
+  'New rule set unlocked! Classify all 20 items cleanly!',
+];
 
 export const BrainSpeedGame: React.FC<BrainSpeedGameProps> = ({
   child,
   difficulty,
+  loginSessionId = 1,
   onFinish,
   onExit,
 }) => {
   const [gameState, setGameState] = useState<'intro' | 'playing' | 'summary'>('intro');
-  const [deck, setDeck] = useState<StimulusItem[]>([]);
+  const [playCount, setPlayCount] = useState(0);
+  const [themePack, setThemePack] = useState<SpeedThemePack>(() =>
+    getSpeedThemeBatch(child.id, child.band, loginSessionId * 31)
+  );
   const [currentIndex, setCurrentIndex] = useState(0);
   const [correctCount, setCorrectCount] = useState(0);
   const [mistakeCount, setMistakeCount] = useState(0);
+  const [missedCurrentItem, setMissedCurrentItem] = useState(false);
   const [reactionTimes, setReactionTimes] = useState<number[]>([]);
   const [itemStartTime, setItemStartTime] = useState(0);
   const [gameStartTime, setGameStartTime] = useState(0);
+  const [timerSeconds, setTimerSeconds] = useState(120);
+  const [totalTimerSeconds, setTotalTimerSeconds] = useState(120);
+  const [remainingSeconds, setRemainingSeconds] = useState(120);
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [showAmberAlert, setShowAmberAlert] = useState(false);
+  const [amberMessage, setAmberMessage] = useState("So close! Let's try again!");
+  const [amberRetryAction, setAmberRetryAction] = useState<'retry_item' | 'restart_game'>('retry_item');
   const [summaryData, setSummaryData] = useState<{
+    score: number;
+    correctCount: number;
+    totalItems: number;
     accuracy: number;
     avgReaction: number;
     duration: number;
     xp: number;
+    timedOut: boolean;
   } | null>(null);
 
-  const config = CATEGORY_CONFIGS[child.band] || CATEGORY_CONFIGS.senior_explorers;
+  const timeoutFinishRef = useRef<() => void>(() => {});
+
+  const introPrompt = INTRO_PROMPTS[(loginSessionId + playCount) % INTRO_PROMPTS.length];
 
   const startSession = () => {
-    // Shuffle items
-    const shuffled = [...config.items].sort(() => Math.random() - 0.5);
-    setDeck(shuffled);
+    const nextSeed = loginSessionId * 43 + playCount * 23 + (Date.now() % 1000);
+    const nextPack = getSpeedThemeBatch(child.id, child.band, nextSeed);
+    setThemePack(nextPack);
+    setPlayCount((p) => p + 1);
     setCurrentIndex(0);
     setCorrectCount(0);
     setMistakeCount(0);
+    setMissedCurrentItem(false);
     setReactionTimes([]);
+    setShowAmberAlert(false);
+    setTotalTimerSeconds(timerSeconds);
+    setRemainingSeconds(timerSeconds);
     const now = Date.now();
     setGameStartTime(now);
     setItemStartTime(now);
     setGameState('playing');
   };
 
+  const handleAdjustRemaining = (delta: number) => {
+    setRemainingSeconds((prev) => {
+      const next = Math.max(5, Math.min(600, prev + delta));
+      setTotalTimerSeconds((t) => Math.max(t, next));
+      return next;
+    });
+  };
+
   const handleClassify = (choice: 'left' | 'right') => {
-    const currentItem = deck[currentIndex];
+    if (showAmberAlert) return;
+    const currentItem = themePack.items[currentIndex];
     if (!currentItem) return;
 
     const reaction = Date.now() - itemStartTime;
-    setReactionTimes((prev) => [...prev, reaction]);
-
     const isCorrect = choice === currentItem.category;
+
     if (isCorrect) {
       soundEngine.playSuccess();
-      setCorrectCount((c) => c + 1);
+      setReactionTimes((prev) => [...prev, reaction]);
+      setShowConfetti(true);
+
+      const nextCorrect = !missedCurrentItem ? correctCount + 1 : correctCount;
+      if (!missedCurrentItem) {
+        setCorrectCount(nextCorrect);
+      }
+
+      if (currentIndex + 1 < themePack.items.length) {
+        setCurrentIndex((i) => i + 1);
+        setMissedCurrentItem(false);
+        setItemStartTime(Date.now());
+      } else {
+        finishGame(nextCorrect);
+      }
     } else {
       soundEngine.playGentleError();
       setMistakeCount((m) => m + 1);
-    }
-
-    if (currentIndex + 1 < deck.length) {
-      setCurrentIndex((i) => i + 1);
-      setItemStartTime(Date.now());
-    } else {
-      finishGame(isCorrect ? correctCount + 1 : correctCount);
+      setMissedCurrentItem(true);
+      setAmberRetryAction('retry_item');
+      setAmberMessage(
+        mistakeCount % 2 === 0
+          ? "You didn't get it this time. Let's try again!"
+          : "So close! Check the two categories and try again!"
+      );
+      setShowAmberAlert(true);
     }
   };
 
-  const finishGame = (finalCorrect: number) => {
-    const duration = Math.max(5, Math.floor((Date.now() - gameStartTime) / 1000));
-    const totalItems = deck.length;
+  const handleAmberRetry = () => {
+    setShowAmberAlert(false);
+    if (amberRetryAction === 'restart_game') {
+      startSession();
+    } else {
+      setItemStartTime(Date.now());
+    }
+  };
+
+  const finishGame = (finalCorrect: number, timedOut = false) => {
+    stopVoice();
+    setShowAmberAlert(false);
+    const duration = timedOut
+      ? totalTimerSeconds
+      : Math.max(5, Math.floor((Date.now() - gameStartTime) / 1000));
+    const totalItems = Math.max(1, themePack.items.length);
     const accuracy = Math.round((finalCorrect / totalItems) * 100);
+    const score = finalCorrect * 10;
     const avgReaction =
       reactionTimes.length > 0
         ? Math.round(reactionTimes.reduce((a, b) => a + b, 0) / reactionTimes.length)
         : 600;
-    const isFlawless = accuracy === 100;
+    const isFlawless = !timedOut && accuracy === 100 && mistakeCount === 0;
     const xp = calculateRewardXp(accuracy, difficulty, isFlawless);
 
     soundEngine.playFanfare();
+    setShowConfetti(true);
 
     const session: GameSession = {
       id: `session-${Date.now()}`,
@@ -164,31 +167,63 @@ export const BrainSpeedGame: React.FC<BrainSpeedGameProps> = ({
       gameId: 'speed_classifier',
       gameTitle: 'Rapid Classifier',
       domain: 'processing_speed',
+      focusArea: 'concentration',
       band: child.band,
       timestamp: new Date().toISOString(),
       durationSeconds: duration,
       difficultyLevel: difficulty,
       accuracy,
       responseTimeMs: avgReaction,
-      mistakes: totalItems - finalCorrect,
+      mistakes: mistakeCount,
       hintsUsed: 0,
       xpEarned: xp,
+      score,
+      timedOut,
       completed: true,
       details: {
+        themeId: themePack.id,
+        themeTitle: themePack.title,
         totalItems,
         correctCount: finalCorrect,
         avgReactionMs: avgReaction,
+        score,
+        timedOut,
       },
     };
 
-    setSummaryData({ accuracy, avgReaction, duration, xp });
+    setSummaryData({
+      score,
+      correctCount: finalCorrect,
+      totalItems,
+      accuracy,
+      avgReaction,
+      duration,
+      xp,
+      timedOut,
+    });
     setGameState('summary');
     onFinish(session);
   };
 
-  // Keyboard arrow listener
+  timeoutFinishRef.current = () => finishGame(correctCount, true);
+
   useEffect(() => {
     if (gameState !== 'playing') return;
+    const interval = setInterval(() => {
+      setRemainingSeconds((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setTimeout(() => timeoutFinishRef.current(), 0);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [gameState]);
+
+  useEffect(() => {
+    if (gameState !== 'playing' || showAmberAlert) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowLeft') {
         handleClassify('left');
@@ -198,151 +233,200 @@ export const BrainSpeedGame: React.FC<BrainSpeedGameProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [gameState, currentIndex, deck, itemStartTime]);
+  });
 
-  const currentItem = deck[currentIndex];
+  const currentItem = themePack.items[currentIndex];
+  const currentQuestionSpeech = currentItem
+    ? `${currentItem.display}${currentItem.subtext ? ', ' + currentItem.subtext : ''}. Does it belong to ${themePack.leftLabel} or ${themePack.rightLabel}?`
+    : '';
+
+  useEffect(() => {
+    if (gameState !== 'playing' || !currentQuestionSpeech) return;
+    speakChildQuestion(currentQuestionSpeech, child.calculatedAge, child.band);
+    return () => stopVoice();
+  }, [gameState, currentIndex, currentQuestionSpeech, child.calculatedAge, child.band]);
 
   return (
     <div className="w-full max-w-2xl mx-auto p-4 md:p-6 select-none font-child">
-      {/* Intro state */}
       {gameState === 'intro' && (
-        <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-xl text-center max-w-xl mx-auto">
-          <div className="w-20 h-20 mx-auto mb-5 rounded-2xl bg-cyan-100 text-cyan-600 flex items-center justify-center">
+        <div className="bg-white rounded-3xl p-8 border-2 border-[#53b0c9] shadow-xl text-center max-w-xl mx-auto">
+          <div className="w-20 h-20 mx-auto mb-5 rounded-2xl bg-[#53b0c9] text-black flex items-center justify-center shadow-md">
             <Zap className="w-10 h-10" />
           </div>
-          <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 mb-3">
+          <h2 className="text-2xl md:text-3xl font-black text-black mb-3">
             Brain Speed: Rapid Classifier
           </h2>
-          <p className="text-slate-600 mb-6 text-base leading-relaxed">
-            Quick visual recognition and classification. Practice responding smoothly and
-            accurately under comfortable timing. Accuracy always comes first!
+          <p className="text-black mb-6 text-base leading-relaxed">
+            {introPrompt}
           </p>
 
-          <div className="bg-slate-50 rounded-2xl p-4 mb-6 flex items-center justify-around text-left">
+          <div className="bg-[#ffd400]/25 border border-[#ffd400] rounded-2xl p-4 mb-6 flex items-center justify-around text-left">
             <div>
-              <span className="text-xs uppercase tracking-wider text-slate-500 font-bold block">
+              <span className="text-xs uppercase tracking-wider text-black/70 font-bold block">
                 Cards
               </span>
-              <span className="text-lg font-bold text-slate-800">{config.items.length} Items</span>
+              <span className="text-sm font-black text-black">{themePack.items.length} Fresh Items</span>
             </div>
             <div>
-              <span className="text-xs uppercase tracking-wider text-slate-500 font-bold block">
+              <span className="text-xs uppercase tracking-wider text-black/70 font-bold block">
                 Rule Focus
               </span>
-              <span className="text-lg font-bold text-cyan-600">{config.title}</span>
+              <span className="text-sm font-black text-[#7f27a8]">{themePack.title}</span>
             </div>
             <div>
-              <span className="text-xs uppercase tracking-wider text-slate-500 font-bold block">
+              <span className="text-xs uppercase tracking-wider text-black/70 font-bold block">
                 Domain
               </span>
-              <span className="text-lg font-bold text-slate-800">Processing Speed</span>
+              <span className="text-sm font-black text-black">Concentration</span>
             </div>
           </div>
+
+          <GameInstructionBox
+            instruction={`Welcome to Rapid Classifier, ${child.name}! Sort each of the ${themePack.items.length} cards into ${themePack.leftLabel} or ${themePack.rightLabel} using the buttons or left and right arrow keys before the timer ends!`}
+            age={child.calculatedAge}
+            band={child.band}
+          />
+
+          <GameTimerSetup seconds={timerSeconds} onChangeSeconds={setTimerSeconds} />
 
           <div className="flex gap-4 justify-center">
             <button
               onClick={onExit}
-              className="px-6 py-3 rounded-2xl text-slate-600 hover:text-slate-900 font-bold hover:bg-slate-100 transition-colors"
+              className="px-6 py-3 rounded-2xl border-2 border-black text-black font-bold hover:bg-[#ffd400]/20 transition-colors cursor-pointer"
             >
               Back to World
             </button>
             <button
               onClick={startSession}
-              className="px-8 py-3.5 rounded-2xl bg-cyan-600 hover:bg-cyan-700 text-white font-extrabold text-lg shadow-lg hover:shadow-cyan-200 transition-all transform active:scale-95 flex items-center gap-2"
+              className="px-8 py-3.5 rounded-2xl bg-[#7f27a8] hover:bg-[#c1008f] text-white font-black text-lg shadow-lg transition-all flex items-center gap-2 cursor-pointer"
             >
-              Start Sorting <ArrowRight className="w-5 h-5" />
+              Start 20-Item Sort <ArrowRight className="w-5 h-5" />
             </button>
           </div>
         </div>
       )}
 
-      {/* Playing state */}
       {gameState === 'playing' && currentItem && (
-        <div>
-          {/* Header */}
-          <div className="flex items-center justify-between mb-6 px-4 py-2.5 bg-white rounded-2xl border border-slate-200 shadow-sm">
-            <span className="text-xs font-bold text-cyan-600 uppercase tracking-wider">
-              Item {currentIndex + 1} of {deck.length}
-            </span>
-            <button
-              onClick={onExit}
-              className="text-xs font-bold text-slate-400 hover:text-slate-700 px-3 py-1 rounded-lg"
-            >
-              Exit
-            </button>
+        <div className="bg-white rounded-3xl p-6 md:p-8 border-2 border-[#53b0c9] shadow-lg">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-[#53b0c9]/30">
+            <div>
+              <span className="text-xs font-black text-[#7f27a8] uppercase tracking-wider">
+                Item {currentIndex + 1} of {themePack.items.length} · {themePack.title}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <QuestionSpeakerButton
+                text={currentQuestionSpeech}
+                age={child.calculatedAge}
+                band={child.band}
+              />
+              <GameTimerHud
+                remainingSeconds={remainingSeconds}
+                totalSeconds={totalTimerSeconds}
+                onAdjustSeconds={handleAdjustRemaining}
+              />
+              <button
+                onClick={() => {
+                  stopVoice();
+                  onExit();
+                }}
+                className="text-xs font-bold text-black hover:bg-[#ffd400]/30 px-3 py-1 rounded-xl border border-black/20 cursor-pointer"
+              >
+                Exit
+              </button>
+            </div>
           </div>
 
-          {/* Central Target Card */}
-          <div className="bg-white rounded-3xl p-10 border border-slate-200 shadow-lg text-center mb-8 flex flex-col items-center justify-center min-h-[220px]">
-            <span className="text-4xl md:text-6xl font-extrabold text-slate-900 mb-2">
+          <GameProgressBar
+            current={currentIndex}
+            total={themePack.items.length}
+            unitLabel="items"
+            accentBgClass="bg-[#f76400]"
+          />
+
+          <div className="bg-[#ffd400]/25 border-2 border-[#ffd400] rounded-3xl p-10 text-center mb-8 flex flex-col items-center justify-center min-h-[210px]">
+            <span className="text-4xl md:text-6xl font-black text-black mb-2">
               {currentItem.display}
             </span>
             {currentItem.subtext && (
-              <span className="text-sm font-semibold text-slate-400">{currentItem.subtext}</span>
+              <span className="text-sm font-bold text-black/75">{currentItem.subtext}</span>
             )}
           </div>
 
-          {/* Classification Choice Buttons */}
           <div className="grid grid-cols-2 gap-4">
             <button
               onClick={() => handleClassify('left')}
-              className="p-6 rounded-2xl bg-sky-50 hover:bg-sky-100 border-2 border-sky-300 text-sky-900 font-extrabold text-base md:text-lg shadow-sm hover:shadow transition-all active:scale-95 flex flex-col items-center justify-center gap-2 group cursor-pointer"
+              className="p-6 rounded-2xl bg-[#53b0c9] hover:bg-[#ffd400] border-2 border-black text-black font-black text-base md:text-lg shadow-md transition-all active:scale-95 flex flex-col items-center justify-center gap-2 group cursor-pointer"
             >
-              <div className="w-10 h-10 rounded-xl bg-sky-600 text-white flex items-center justify-center group-hover:-translate-x-1 transition-transform">
+              <div className="w-10 h-10 rounded-xl bg-black text-white flex items-center justify-center group-hover:-translate-x-1 transition-transform">
                 <ArrowLeft className="w-6 h-6" />
               </div>
-              <span>{config.leftLabel}</span>
-              <span className="text-xs font-medium text-sky-600 hidden md:block">
-                (Press Left Arrow)
+              <span>{themePack.leftLabel}</span>
+              <span className="text-xs font-bold text-black/80 hidden md:block">
+                (Left Arrow Key)
               </span>
             </button>
 
             <button
               onClick={() => handleClassify('right')}
-              className="p-6 rounded-2xl bg-indigo-50 hover:bg-indigo-100 border-2 border-indigo-300 text-indigo-900 font-extrabold text-base md:text-lg shadow-sm hover:shadow transition-all active:scale-95 flex flex-col items-center justify-center gap-2 group cursor-pointer"
+              className="p-6 rounded-2xl bg-[#7f27a8] hover:bg-[#c1008f] border-2 border-black text-white font-black text-base md:text-lg shadow-md transition-all active:scale-95 flex flex-col items-center justify-center gap-2 group cursor-pointer"
             >
-              <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center group-hover:translate-x-1 transition-transform">
+              <div className="w-10 h-10 rounded-xl bg-[#ffd400] text-black flex items-center justify-center group-hover:translate-x-1 transition-transform">
                 <ArrowRight className="w-6 h-6" />
               </div>
-              <span>{config.rightLabel}</span>
-              <span className="text-xs font-medium text-indigo-600 hidden md:block">
-                (Press Right Arrow)
+              <span>{themePack.rightLabel}</span>
+              <span className="text-xs font-bold text-white/90 hidden md:block">
+                (Right Arrow Key)
               </span>
             </button>
           </div>
         </div>
       )}
 
-      {/* Summary state */}
       {gameState === 'summary' && summaryData && (
-        <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-2xl text-center max-w-md mx-auto">
-          <div className="w-20 h-20 mx-auto mb-4 rounded-3xl bg-cyan-100 text-cyan-600 flex items-center justify-center shadow-inner">
-            <Award className="w-10 h-10" />
+        <div className="bg-white rounded-3xl p-8 border-2 border-[#7f27a8] shadow-2xl text-center max-w-md mx-auto">
+          <div className="w-20 h-20 mx-auto mb-4 rounded-3xl bg-[#ffd400] text-black flex items-center justify-center shadow-inner">
+            {summaryData.timedOut ? <Clock className="w-10 h-10" /> : <Award className="w-10 h-10" />}
           </div>
 
-          <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 mb-1">
-            Speed Round Completed!
+          {summaryData.timedOut && (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#c1008f] text-white text-xs font-black uppercase tracking-wider mb-2">
+              <Clock className="w-3.5 h-3.5" /> Time&apos;s Up! Final Score
+            </span>
+          )}
+
+          <h2 className="text-2xl md:text-3xl font-black text-black mb-1">
+            {summaryData.timedOut ? "Time's Up!" : '20 Items Sorted!'}
           </h2>
-          <p className="text-slate-500 text-sm mb-6">
-            Efficient categorization practice completed with balanced accuracy.
+          <p className="text-black/75 text-sm mb-5 font-medium">
+            Sorted {summaryData.correctCount} of {summaryData.totalItems} cards accurately.
           </p>
 
-          <div className="grid grid-cols-3 gap-2 bg-slate-50 rounded-2xl p-4 mb-6 text-center">
+          <div className="bg-[#ffd400] border-2 border-black rounded-2xl p-4 mb-4">
+            <span className="text-xs font-black text-black uppercase tracking-wider block">
+              Final Score
+            </span>
+            <span className="text-3xl font-black text-black tabular-nums">
+              {summaryData.score} pts
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 bg-[#53b0c9]/20 border border-[#53b0c9] rounded-2xl p-4 mb-6 text-center">
             <div>
-              <span className="text-xs font-bold text-slate-500 block uppercase">Accuracy</span>
-              <span className="text-xl font-black text-slate-900 tabular-nums">
+              <span className="text-xs font-bold text-black/70 block uppercase">Accuracy</span>
+              <span className="text-xl font-black text-black tabular-nums">
                 {summaryData.accuracy}%
               </span>
             </div>
             <div>
-              <span className="text-xs font-bold text-slate-500 block uppercase">Response</span>
-              <span className="text-xl font-black text-slate-900 tabular-nums">
-                {summaryData.avgReaction}ms
+              <span className="text-xs font-bold text-black/70 block uppercase">Time</span>
+              <span className="text-xl font-black text-black tabular-nums">
+                {formatTimerClock(summaryData.duration)}
               </span>
             </div>
             <div>
-              <span className="text-xs font-bold text-slate-500 block uppercase">XP Earned</span>
-              <span className="text-xl font-black text-amber-500 tabular-nums">
+              <span className="text-xs font-bold text-black/70 block uppercase">XP Earned</span>
+              <span className="text-xl font-black text-[#f76400] tabular-nums">
                 +{summaryData.xp}
               </span>
             </div>
@@ -351,19 +435,26 @@ export const BrainSpeedGame: React.FC<BrainSpeedGameProps> = ({
           <div className="flex gap-3 justify-center">
             <button
               onClick={startSession}
-              className="px-5 py-3 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 font-bold transition-colors"
+              className="px-5 py-3 rounded-xl border-2 border-black text-black hover:bg-[#ffd400]/25 font-black transition-colors cursor-pointer"
             >
-              Play Again
+              Play New Rule Set
             </button>
             <button
               onClick={onExit}
-              className="px-6 py-3 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold shadow-md transition-colors"
+              className="px-6 py-3 rounded-xl bg-[#7f27a8] hover:bg-[#c1008f] text-white font-black shadow-md transition-colors cursor-pointer"
             >
               Return to World
             </button>
           </div>
         </div>
       )}
+
+      <ConfettiOverlay show={showConfetti} onComplete={() => setShowConfetti(false)} />
+      <AmberFailureAlert
+        isOpen={showAmberAlert}
+        customMessage={amberMessage}
+        onRetry={handleAmberRetry}
+      />
     </div>
   );
 };

@@ -1,0 +1,346 @@
+{
+  "entities": {
+    "ParentAccount": {
+      "title": "ParentAccount",
+      "description": "Authenticated parent guardian account owning MindQuest child sub-profiles and controls.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the parent.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Guardian display name.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Verified parent email address.",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "pin": {
+          "type": "string",
+          "description": "4-to-6 digit Parent Gate PIN used to exit child mode.",
+          "minLength": 4,
+          "maxLength": 6,
+          "pattern": "^[0-9]{4,6}$"
+        },
+        "plan": {
+          "type": "string",
+          "description": "MindQuest family membership tier.",
+          "enum": ["free", "family_premium"]
+        },
+        "termsAccepted": {
+          "type": "boolean",
+          "description": "Whether the parent accepted MindQuest terms of service."
+        },
+        "consentGiven": {
+          "type": "boolean",
+          "description": "Verifiable parental safeguarding and COPPA/GDPR consent flag."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the parent signed up."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last profile update."
+        }
+      },
+      "required": [
+        "uid",
+        "name",
+        "email",
+        "pin",
+        "plan",
+        "termsAccepted",
+        "consentGiven",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ChildProfile": {
+      "title": "ChildProfile",
+      "description": "Independent child explorer sub-profile managed under a parent account.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the child profile.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "parentId": {
+          "type": "string",
+          "description": "Owner parent Firebase Auth UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Child first name or nickname.",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "birthDate": {
+          "type": "string",
+          "description": "Child date of birth in YYYY-MM-DD format.",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "calculatedAge": {
+          "type": "integer",
+          "description": "Age derived from birthDate."
+        },
+        "band": {
+          "type": "string",
+          "description": "Assigned developmental band.",
+          "enum": ["young_explorers", "senior_explorers", "discoverers", "masters"]
+        },
+        "avatar": {
+          "type": "string",
+          "description": "Selected explorer avatar ID.",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "accessibility": {
+          "type": "object",
+          "description": "Child sound, motion, and display accessibility preferences."
+        },
+        "dailyLimitMinutes": {
+          "type": "integer",
+          "description": "Parent-configured daily playtime cap in minutes."
+        },
+        "todayMinutesPlayed": {
+          "type": "integer",
+          "description": "Minutes played today."
+        },
+        "streakDays": {
+          "type": "integer",
+          "description": "Current consecutive day streak."
+        },
+        "bestStreak": {
+          "type": "integer",
+          "description": "Highest consecutive day streak achieved."
+        },
+        "lastActiveDate": {
+          "type": "string",
+          "description": "Last YYYY-MM-DD active game date.",
+          "maxLength": 10
+        },
+        "streakBadges": {
+          "type": "array",
+          "description": "Bounded list of streak milestone IDs."
+        },
+        "achievements": {
+          "type": "array",
+          "description": "Bounded list of cognitive domain mastery achievement records."
+        },
+        "allowedFocusAreas": {
+          "type": "array",
+          "description": "Parent-selected active game focus areas."
+        },
+        "totalXp": {
+          "type": "integer",
+          "description": "Accumulated explorer XP."
+        },
+        "level": {
+          "type": "integer",
+          "description": "Current explorer level."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of profile creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        }
+      },
+      "required": [
+        "id",
+        "parentId",
+        "name",
+        "birthDate",
+        "calculatedAge",
+        "band",
+        "avatar",
+        "accessibility",
+        "dailyLimitMinutes",
+        "todayMinutesPlayed",
+        "streakDays",
+        "bestStreak",
+        "streakBadges",
+        "achievements",
+        "allowedFocusAreas",
+        "totalXp",
+        "level",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "GameSession": {
+      "title": "GameSession",
+      "description": "Recorded cognitive mini-game session belonging to a parent's child profile.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique session identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "parentId": {
+          "type": "string",
+          "description": "Owner parent Firebase Auth UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "childId": {
+          "type": "string",
+          "description": "Target child profile identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "gameId": {
+          "type": "string",
+          "description": "Game module identifier.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "gameTitle": {
+          "type": "string",
+          "description": "Display title of the game.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "domain": {
+          "type": "string",
+          "description": "Cognitive domain practiced.",
+          "enum": [
+            "memory",
+            "attention",
+            "reasoning",
+            "processing_speed",
+            "cognitive_flexibility",
+            "executive_function",
+            "mental_math",
+            "spatial_thinking",
+            "reading_comprehension"
+          ]
+        },
+        "focusArea": {
+          "type": "string",
+          "description": "Parental focus category.",
+          "enum": ["reading", "concentration", "mental_abilities"]
+        },
+        "band": {
+          "type": "string",
+          "description": "Child developmental band during session.",
+          "enum": ["young_explorers", "senior_explorers", "discoverers", "masters"]
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "ISO timestamp of session completion.",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "durationSeconds": {
+          "type": "number",
+          "description": "Session duration in seconds."
+        },
+        "difficultyLevel": {
+          "type": "integer",
+          "description": "Adaptive difficulty tier (1 to 5)."
+        },
+        "accuracy": {
+          "type": "number",
+          "description": "Accuracy percentage (0 to 100)."
+        },
+        "score": {
+          "type": "number",
+          "description": "Points scored during gameplay."
+        },
+        "timedOut": {
+          "type": "boolean",
+          "description": "Whether session closed due to timer expiry."
+        },
+        "responseTimeMs": {
+          "type": "number",
+          "description": "Mean response latency in milliseconds."
+        },
+        "mistakes": {
+          "type": "integer",
+          "description": "Count of mistakes."
+        },
+        "hintsUsed": {
+          "type": "integer",
+          "description": "Count of hints used."
+        },
+        "xpEarned": {
+          "type": "integer",
+          "description": "XP awarded for the session."
+        },
+        "completed": {
+          "type": "boolean",
+          "description": "Whether session completed."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of record persistence."
+        }
+      },
+      "required": [
+        "id",
+        "parentId",
+        "childId",
+        "gameId",
+        "gameTitle",
+        "domain",
+        "focusArea",
+        "band",
+        "timestamp",
+        "durationSeconds",
+        "difficultyLevel",
+        "accuracy",
+        "mistakes",
+        "hintsUsed",
+        "xpEarned",
+        "completed",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/parents/{parentId}": {
+      "schema": { "$ref": "#/entities/ParentAccount" },
+      "description": "Authenticated parent guardian account profile and PIN preferences (strict owner PII isolation)."
+    },
+    "/parents/{parentId}/children/{childId}": {
+      "schema": { "$ref": "#/entities/ChildProfile" },
+      "description": "Child profiles scoped strictly under their parent guardian document."
+    },
+    "/parents/{parentId}/sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/GameSession" },
+      "description": "Immutable game session analytics records scoped strictly under the parent guardian document."
+    }
+  }
+}

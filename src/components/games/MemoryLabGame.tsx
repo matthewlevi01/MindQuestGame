@@ -1,12 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ChildProfile, GameSession } from '../../types';
 import { soundEngine } from '../../utils/sound';
-import { calculateRewardXp } from '../../utils/engine';
+import { calculateRewardXp, getAgeBasedCardConfig } from '../../utils/engine';
+import { getMemoryPairsBatch } from '../../data/questionBank';
+import { ConfettiOverlay } from '../common/ConfettiOverlay';
+import { AmberFailureAlert } from '../common/AmberFailureAlert';
+import { GameTimerSetup, GameTimerHud, formatTimerClock } from '../common/GameTimerBar';
+import { GameProgressBar } from '../common/GameProgressBar';
+import { GameInstructionBox } from '../common/GameInstructionBox';
+import { QuestionSpeakerButton } from '../common/QuestionSpeakerButton';
+import { speakChildQuestion, stopVoice } from '../../utils/voiceService';
 import { Sparkles, RotateCcw, ArrowRight, Brain, Clock, Award } from 'lucide-react';
 
 interface MemoryLabGameProps {
   child: ChildProfile;
   difficulty: number;
+  loginSessionId?: number;
   onFinish: (session: GameSession) => void;
   onExit: () => void;
 }
@@ -20,84 +29,66 @@ interface CardItem {
   isMatched: boolean;
 }
 
-const EMOJI_SETS = {
-  young_explorers: [
-    { symbol: '🦁', label: 'Lion' },
-    { symbol: '🐘', label: 'Elephant' },
-    { symbol: '🐬', label: 'Dolphin' },
-    { symbol: '🐼', label: 'Panda' },
-    { symbol: '🐸', label: 'Frog' },
-    { symbol: '🦊', label: 'Fox' },
-  ],
-  senior_explorers: [
-    { symbol: '🧭', label: 'Compass' },
-    { symbol: '🗺️', label: 'Map' },
-    { symbol: '🔭', label: 'Telescope' },
-    { symbol: '💎', label: 'Gem' },
-    { symbol: '⚓', label: 'Anchor' },
-    { symbol: '🏕️', label: 'Camp' },
-    { symbol: '🛶', label: 'Canoe' },
-    { symbol: '🦜', label: 'Parrot' },
-  ],
-  discoverers: [
-    { symbol: '🔬', label: 'Microscope' },
-    { symbol: '🧬', label: 'Helix' },
-    { symbol: '🔍', label: 'Magnifier' },
-    { symbol: '🧪', label: 'Flask' },
-    { symbol: '📐', label: 'Ruler' },
-    { symbol: '⚖️', label: 'Scale' },
-    { symbol: '🗝️', label: 'Key' },
-    { symbol: '📜', label: 'Scroll' },
-  ],
-  masters: [
-    { symbol: '⬡', label: 'Hex Core' },
-    { symbol: '◈', label: 'Diamond' },
-    { symbol: '▲', label: 'Prism' },
-    { symbol: '◎', label: 'Orbital' },
-    { symbol: '◬', label: 'Pyramid' },
-    { symbol: '⎔', label: 'Node' },
-    { symbol: '❂', label: 'Sun Pulse' },
-    { symbol: '⯁', label: 'Matrix' },
-  ],
-};
+const INTRO_PROMPTS = [
+  'Flip cards to reveal hidden symbols and pair them in minimal moves!',
+  'A fresh shuffled deck awaits! Spot every matching pair across the board!',
+  'Train sharp visual memory with a brand-new deck on every run!',
+];
 
 export const MemoryLabGame: React.FC<MemoryLabGameProps> = ({
   child,
   difficulty,
+  loginSessionId = 1,
   onFinish,
   onExit,
 }) => {
   const [gameState, setGameState] = useState<'intro' | 'playing' | 'summary'>('intro');
+  const [playCount, setPlayCount] = useState(0);
   const [cards, setCards] = useState<CardItem[]>([]);
   const [flippedCards, setFlippedCards] = useState<number[]>([]);
   const [moves, setMoves] = useState(0);
   const [mistakes, setMistakes] = useState(0);
   const [startTime, setStartTime] = useState<number>(0);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [timerSeconds, setTimerSeconds] = useState(120);
+  const [totalTimerSeconds, setTotalTimerSeconds] = useState(120);
+  const [remainingSeconds, setRemainingSeconds] = useState(120);
   const [isProcessing, setIsProcessing] = useState(false);
   const [summaryData, setSummaryData] = useState<{
+    score: number;
+    matchedPairs: number;
+    totalPairs: number;
     accuracy: number;
     duration: number;
     xp: number;
     isFlawless: boolean;
+    timedOut: boolean;
   } | null>(null);
 
-  // Determine pair count based on band & difficulty
-  const getPairCount = () => {
-    if (child.band === 'young_explorers') return 3; // 6 cards total
-    if (child.band === 'senior_explorers') return difficulty >= 3 ? 6 : 4; // 8-12 cards
-    if (child.band === 'discoverers') return difficulty >= 3 ? 8 : 6; // 12-16 cards
-    return 8; // Masters: 16 cards
-  };
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [showAmberAlert, setShowAmberAlert] = useState(false);
+  const [amberMessage, setAmberMessage] = useState("So close! Let's try again and beat that score!");
+
+  const timeoutFinishRef = useRef<() => void>(() => {});
+
+  const ageConfig = getAgeBasedCardConfig(child.calculatedAge, difficulty);
+  const pairCount = Math.min(10, Math.max(3, ageConfig.pairCount));
+  const introPrompt = INTRO_PROMPTS[(loginSessionId + playCount) % INTRO_PROMPTS.length];
+  const matchedPairCount = Math.floor(cards.filter((c) => c.isMatched).length / 2);
+  const memoryMissionSpeech = `Flip two cards at a time to match all ${pairCount} hidden pairs!`;
+
+  useEffect(() => {
+    if (gameState !== 'playing') return;
+    speakChildQuestion(memoryMissionSpeech, child.calculatedAge, child.band);
+    return () => stopVoice();
+  }, [gameState, playCount, memoryMissionSpeech, child.calculatedAge, child.band]);
 
   const initGame = () => {
-    const pairCount = getPairCount();
-    const set = EMOJI_SETS[child.band] || EMOJI_SETS.senior_explorers;
-    const selectedPairs = set.slice(0, pairCount);
+    const nextSeed = loginSessionId * 41 + playCount * 29 + (Date.now() % 1000);
+    const selectedPairs = getMemoryPairsBatch(child.id, child.band, pairCount, nextSeed);
+    setPlayCount((p) => p + 1);
 
     const deck: CardItem[] = [];
     selectedPairs.forEach((item, index) => {
-      // First card
       deck.push({
         id: index * 2,
         pairId: index,
@@ -106,7 +97,6 @@ export const MemoryLabGame: React.FC<MemoryLabGameProps> = ({
         isFlipped: false,
         isMatched: false,
       });
-      // Second card
       deck.push({
         id: index * 2 + 1,
         pairId: index,
@@ -117,34 +107,48 @@ export const MemoryLabGame: React.FC<MemoryLabGameProps> = ({
       });
     });
 
-    // Shuffle
     const shuffled = deck.sort(() => Math.random() - 0.5);
     setCards(shuffled);
     setFlippedCards([]);
     setMoves(0);
     setMistakes(0);
+    setShowAmberAlert(false);
+    setTotalTimerSeconds(timerSeconds);
+    setRemainingSeconds(timerSeconds);
     setStartTime(Date.now());
-    setElapsedSeconds(0);
     setGameState('playing');
   };
 
-  // Timer loop
+  const handleAdjustRemaining = (delta: number) => {
+    setRemainingSeconds((prev) => {
+      const next = Math.max(5, Math.min(600, prev + delta));
+      setTotalTimerSeconds((t) => Math.max(t, next));
+      return next;
+    });
+  };
+
   useEffect(() => {
     if (gameState !== 'playing') return;
     const interval = setInterval(() => {
-      setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
+      setRemainingSeconds((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setTimeout(() => timeoutFinishRef.current(), 0);
+          return 0;
+        }
+        return prev - 1;
+      });
     }, 1000);
     return () => clearInterval(interval);
-  }, [gameState, startTime]);
+  }, [gameState]);
 
   const handleCardClick = (cardId: number) => {
-    if (isProcessing) return;
+    if (isProcessing || showAmberAlert) return;
     const clickedCard = cards.find((c) => c.id === cardId);
     if (!clickedCard || clickedCard.isFlipped || clickedCard.isMatched) return;
 
     soundEngine.playPop();
 
-    // Flip card
     const updatedCards = cards.map((c) => (c.id === cardId ? { ...c, isFlipped: true } : c));
     setCards(updatedCards);
 
@@ -152,7 +156,8 @@ export const MemoryLabGame: React.FC<MemoryLabGameProps> = ({
     setFlippedCards(newFlipped);
 
     if (newFlipped.length === 2) {
-      setMoves((prev) => prev + 1);
+      const nextMoves = moves + 1;
+      setMoves(nextMoves);
       setIsProcessing(true);
 
       const [firstId, secondId] = newFlipped;
@@ -160,9 +165,9 @@ export const MemoryLabGame: React.FC<MemoryLabGameProps> = ({
       const secondCard = cards.find((c) => c.id === secondId);
 
       if (firstCard && secondCard && firstCard.pairId === secondCard.pairId) {
-        // Matched!
         setTimeout(() => {
           soundEngine.playSuccess();
+          setShowConfetti(true);
           const matchedDeck = updatedCards.map((c) =>
             c.id === firstId || c.id === secondId ? { ...c, isMatched: true } : c
           );
@@ -170,14 +175,13 @@ export const MemoryLabGame: React.FC<MemoryLabGameProps> = ({
           setFlippedCards([]);
           setIsProcessing(false);
 
-          // Check if all matched
           if (matchedDeck.every((c) => c.isMatched)) {
-            finishGame(matchedDeck);
+            finishGame(matchedDeck, nextMoves, mistakes);
           }
-        }, 400);
+        }, 350);
       } else {
-        // Mismatch
-        setMistakes((prev) => prev + 1);
+        const nextMistakes = mistakes + 1;
+        setMistakes(nextMistakes);
         setTimeout(() => {
           soundEngine.playGentleError();
           setCards((prev) =>
@@ -187,20 +191,37 @@ export const MemoryLabGame: React.FC<MemoryLabGameProps> = ({
           );
           setFlippedCards([]);
           setIsProcessing(false);
-        }, 900);
+
+          if (nextMistakes > pairCount * 2) {
+            setAmberMessage("You didn't get it this time. Let's focus and try a fresh round!");
+            setShowAmberAlert(true);
+          }
+        }, 750);
       }
     }
   };
 
-  const finishGame = (finalCards: CardItem[]) => {
-    const duration = Math.max(10, Math.floor((Date.now() - startTime) / 1000));
-    const pairCount = finalCards.length / 2;
-    // Accuracy based on moves vs optimal moves
-    const minMovesNeeded = pairCount;
-    const extraMoves = Math.max(0, moves + 1 - minMovesNeeded);
-    const accuracy = Math.max(40, Math.round(100 - extraMoves * 7));
-    const isFlawless = mistakes === 0;
-    const xp = calculateRewardXp(accuracy, difficulty, isFlawless);
+  const finishGame = (
+    finalCards: CardItem[],
+    totalMoves: number,
+    totalMistakes: number,
+    timedOut = false
+  ) => {
+    stopVoice();
+    setShowAmberAlert(false);
+    const duration = timedOut
+      ? totalTimerSeconds
+      : Math.max(5, Math.floor((Date.now() - startTime) / 1000));
+    const totalPairs = Math.max(1, finalCards.length / 2);
+    const matchedPairs = Math.floor(finalCards.filter((c) => c.isMatched).length / 2);
+    const minMovesNeeded = totalPairs;
+    const extraMoves = Math.max(0, totalMoves - minMovesNeeded);
+    const accuracy = timedOut
+      ? Math.round((matchedPairs / totalPairs) * 100)
+      : Math.max(40, Math.round(100 - extraMoves * 7));
+    const score = matchedPairs * 20;
+    const isFlawless = !timedOut && totalMistakes === 0;
+    const xp = calculateRewardXp(accuracy, difficulty, isFlawless) + 15;
 
     soundEngine.playFanfare();
 
@@ -210,75 +231,107 @@ export const MemoryLabGame: React.FC<MemoryLabGameProps> = ({
       gameId: 'memory_pairs',
       gameTitle: 'Picture Pairs & Sequence',
       domain: 'memory',
+      focusArea: 'mental_abilities',
       band: child.band,
       timestamp: new Date().toISOString(),
       durationSeconds: duration,
       difficultyLevel: difficulty,
       accuracy,
-      responseTimeMs: Math.round((duration * 1000) / Math.max(1, moves)),
-      mistakes,
+      responseTimeMs: Math.round((duration * 1000) / Math.max(1, totalMoves)),
+      mistakes: totalMistakes,
       hintsUsed: 0,
       xpEarned: xp,
+      score,
+      timedOut,
       completed: true,
       details: {
-        totalPairs: pairCount,
-        movesCompleted: moves + 1,
+        totalPairs,
+        matchedPairs,
+        movesCompleted: totalMoves,
+        score,
+        timedOut,
       },
     };
 
-    setSummaryData({ accuracy, duration, xp, isFlawless });
+    setSummaryData({
+      score,
+      matchedPairs,
+      totalPairs,
+      accuracy,
+      duration,
+      xp,
+      isFlawless,
+      timedOut,
+    });
+    if (!timedOut && accuracy < 60) {
+      setAmberMessage("So close! Let's try again and beat that accuracy score!");
+      setShowAmberAlert(true);
+    } else {
+      setShowConfetti(true);
+    }
     setGameState('summary');
     onFinish(session);
   };
 
+  timeoutFinishRef.current = () => finishGame(cards, moves, mistakes, true);
+
   return (
     <div className="w-full max-w-4xl mx-auto p-4 md:p-6 select-none font-child">
-      {/* Intro state */}
       {gameState === 'intro' && (
-        <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-xl text-center max-w-xl mx-auto">
-          <div className="w-20 h-20 mx-auto mb-5 rounded-2xl bg-violet-100 text-violet-600 flex items-center justify-center">
+        <div className="bg-white rounded-3xl p-8 border-2 border-[#7f27a8] shadow-xl text-center max-w-xl mx-auto">
+          <div className="w-20 h-20 mx-auto mb-5 rounded-2xl bg-[#7f27a8] text-white flex items-center justify-center shadow-md">
             <Brain className="w-10 h-10" />
           </div>
-          <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 mb-3">
+          <h2 className="text-2xl md:text-3xl font-black text-black mb-3">
             Memory Lab: Picture Pairs
           </h2>
-          <p className="text-slate-600 mb-6 text-base leading-relaxed">
-            {child.band === 'young_explorers'
-              ? 'Find the matching animal friends! Tap a card to flip it over, then find its partner.'
-              : 'Test your spatial recall. Flip cards to reveal hidden symbols and pair them together in minimal moves.'}
+          <p className="text-black mb-6 text-base leading-relaxed">
+            {introPrompt}
           </p>
 
-          <div className="bg-slate-50 rounded-2xl p-4 mb-6 flex items-center justify-around text-left">
+          <div className="bg-[#ffd400]/25 border border-[#ffd400] rounded-2xl p-4 mb-6 flex items-center justify-around text-left">
             <div>
-              <span className="text-xs uppercase tracking-wider text-slate-500 font-bold block">
-                Target Pairs
+              <span className="text-xs uppercase tracking-wider text-black/70 font-bold block">
+                Deck Size
               </span>
-              <span className="text-lg font-bold text-slate-800">{getPairCount()} Pairs</span>
+              <span className="text-sm font-black text-black">
+                {pairCount * 2} Cards ({pairCount} Pairs)
+              </span>
             </div>
             <div>
-              <span className="text-xs uppercase tracking-wider text-slate-500 font-bold block">
-                Challenge Tier
+              <span className="text-xs uppercase tracking-wider text-black/70 font-bold block">
+                Age Tier
               </span>
-              <span className="text-lg font-bold text-violet-600">Level {difficulty}</span>
+              <span className="text-sm font-black text-[#7f27a8]">
+                Age {ageConfig.age} · Lv.{difficulty}
+              </span>
             </div>
             <div>
-              <span className="text-xs uppercase tracking-wider text-slate-500 font-bold block">
+              <span className="text-xs uppercase tracking-wider text-black/70 font-bold block">
                 Domain
               </span>
-              <span className="text-lg font-bold text-slate-800">Visual Memory</span>
+              <span className="text-sm font-black text-black">Visual Memory</span>
             </div>
           </div>
+
+          <GameInstructionBox
+            instruction={`Welcome to Memory Lab, ${child.name}! Flip two cards each turn to uncover matching picture pairs. Clear all ${pairCount} pairs with the fewest moves before the timer runs out!`}
+            age={child.calculatedAge}
+            band={child.band}
+          />
+
+          <GameTimerSetup seconds={timerSeconds} onChangeSeconds={setTimerSeconds} />
 
           <div className="flex gap-4 justify-center">
             <button
               onClick={onExit}
-              className="px-6 py-3 rounded-2xl text-slate-600 hover:text-slate-900 font-bold hover:bg-slate-100 transition-colors"
+              className="px-6 py-3 rounded-2xl border-2 border-black text-black font-bold hover:bg-[#ffd400]/20 transition-colors cursor-pointer"
             >
               Back to World
             </button>
             <button
               onClick={initGame}
-              className="px-8 py-3.5 rounded-2xl bg-violet-600 hover:bg-violet-700 text-white font-extrabold text-lg shadow-lg hover:shadow-violet-200 transition-all transform active:scale-95 flex items-center gap-2"
+              className="px-8 py-3.5 rounded-2xl bg-[#7f27a8] hover:bg-[#c1008f] text-white font-black text-lg shadow-lg transition-all flex items-center gap-2 cursor-pointer"
             >
               Start Playing <ArrowRight className="w-5 h-5" />
             </button>
@@ -286,52 +339,63 @@ export const MemoryLabGame: React.FC<MemoryLabGameProps> = ({
         </div>
       )}
 
-      {/* Playing state */}
       {gameState === 'playing' && (
-        <div>
-          {/* Top HUD */}
-          <div className="flex items-center justify-between mb-6 px-4 py-3 bg-white/90 backdrop-blur-xs rounded-2xl border border-slate-200 shadow-sm">
-            <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2 text-slate-600">
-                <Clock className="w-5 h-5 text-violet-600" />
-                <span className="font-bold text-base tabular-nums">
-                  {Math.floor(elapsedSeconds / 60)}:
-                  {(elapsedSeconds % 60).toString().padStart(2, '0')}
-                </span>
-              </div>
-              <div className="text-slate-600">
-                <span className="text-xs uppercase tracking-wider font-bold text-slate-500 mr-2">
+        <div className="bg-white rounded-3xl p-5 md:p-6 border-2 border-[#7f27a8] shadow-lg">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-6 pb-3 border-b border-[#7f27a8]/20">
+            <div className="flex items-center gap-4 flex-wrap">
+              <GameTimerHud
+                remainingSeconds={remainingSeconds}
+                totalSeconds={totalTimerSeconds}
+                onAdjustSeconds={handleAdjustRemaining}
+              />
+              <div className="text-black">
+                <span className="text-xs uppercase tracking-wider font-bold text-black/70 mr-2">
                   Moves
                 </span>
-                <span className="font-bold text-base tabular-nums text-slate-800">{moves}</span>
+                <span className="font-black text-base tabular-nums">{moves}</span>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <QuestionSpeakerButton
+                text={memoryMissionSpeech}
+                age={child.calculatedAge}
+                band={child.band}
+                label="Hear Mission"
+              />
               <button
                 onClick={initGame}
-                title="Restart"
-                className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors"
+                title="Draw Fresh Deck"
+                className="p-2 text-black hover:bg-[#ffd400]/30 rounded-xl border border-black/20 transition-colors cursor-pointer"
               >
-                <RotateCcw className="w-5 h-5" />
+                <RotateCcw className="w-4 h-4" />
               </button>
               <button
-                onClick={onExit}
-                className="px-4 py-2 text-sm font-bold text-slate-600 hover:text-slate-900 rounded-xl hover:bg-slate-100 transition-colors"
+                onClick={() => {
+                  stopVoice();
+                  onExit();
+                }}
+                className="px-4 py-1.5 text-xs font-bold text-black hover:bg-[#ffd400]/30 rounded-xl border border-black/20 transition-colors cursor-pointer"
               >
                 Exit Game
               </button>
             </div>
           </div>
 
-          {/* Cards Grid */}
+          <GameProgressBar
+            current={matchedPairCount}
+            total={pairCount}
+            unitLabel="pairs"
+            accentBgClass="bg-[#7f27a8]"
+          />
+
           <div
             className={`grid gap-3 md:gap-4 mx-auto max-w-2xl ${
               cards.length <= 6
                 ? 'grid-cols-3 max-w-md'
                 : cards.length <= 12
                 ? 'grid-cols-3 sm:grid-cols-4'
-                : 'grid-cols-4 sm:grid-cols-4'
+                : 'grid-cols-4 sm:grid-cols-5'
             }`}
           >
             {cards.map((card) => {
@@ -341,24 +405,27 @@ export const MemoryLabGame: React.FC<MemoryLabGameProps> = ({
                   key={card.id}
                   onClick={() => handleCardClick(card.id)}
                   disabled={card.isMatched || card.isFlipped || isProcessing}
-                  className={`aspect-square rounded-2xl flex flex-col items-center justify-center p-3 text-center transition-all duration-300 transform active:scale-95 shadow-sm border ${
+                  className={`aspect-square rounded-2xl flex flex-col items-center justify-center p-2.5 text-center transition-all duration-300 transform active:scale-95 shadow-sm border-2 ${
                     showFace
                       ? card.isMatched
-                        ? 'bg-emerald-50 border-emerald-300 text-emerald-800 ring-2 ring-emerald-400'
-                        : 'bg-violet-50 border-violet-300 text-violet-900 shadow-md'
-                      : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-violet-300 shadow-sm cursor-pointer'
+                        ? 'bg-[#ffd400] border-[#f76400] text-black ring-2 ring-[#f76400]'
+                        : 'bg-[#53b0c9]/25 border-[#53b0c9] text-black shadow-md'
+                      : 'bg-white hover:bg-[#e885cf]/20 border-[#7f27a8] shadow-sm cursor-pointer'
                   }`}
                 >
                   {showFace ? (
                     <>
                       <span className="text-3xl md:text-5xl mb-1 select-none">{card.symbol}</span>
-                      <span className="text-xs md:text-sm font-bold truncate max-w-full">
+                      <span className="text-xs md:text-sm font-black truncate max-w-full text-black">
                         {card.label}
                       </span>
                     </>
                   ) : (
-                    <div className="w-8 h-8 rounded-full bg-violet-100/70 text-violet-500 flex items-center justify-center">
-                      <Sparkles className="w-4 h-4" />
+                    <div className="flex flex-col items-center justify-center bg-[#7f27a8] w-full h-full rounded-xl p-1.5 text-center border-2 border-[#ffd400]">
+                      <Sparkles className="w-3.5 h-3.5 text-[#ffd400] mb-0.5" />
+                      <span className="text-[10px] sm:text-xs font-black text-white leading-tight">
+                        Who or What
+                      </span>
                     </div>
                   )}
                 </button>
@@ -368,44 +435,58 @@ export const MemoryLabGame: React.FC<MemoryLabGameProps> = ({
         </div>
       )}
 
-      {/* Summary state */}
       {gameState === 'summary' && summaryData && (
-        <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-2xl text-center max-w-md mx-auto animate-in fade-in zoom-in duration-200">
-          <div className="w-20 h-20 mx-auto mb-4 rounded-3xl bg-amber-100 text-amber-600 flex items-center justify-center shadow-inner">
-            <Award className="w-10 h-10" />
+        <div className="bg-white rounded-3xl p-8 border-2 border-[#7f27a8] shadow-2xl text-center max-w-md mx-auto">
+          <div className="w-20 h-20 mx-auto mb-4 rounded-3xl bg-[#ffd400] text-black flex items-center justify-center shadow-inner">
+            {summaryData.timedOut ? <Clock className="w-10 h-10" /> : <Award className="w-10 h-10" />}
           </div>
 
-          <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 mb-1">
-            Challenge Completed!
+          {summaryData.timedOut && (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#c1008f] text-white text-xs font-black uppercase tracking-wider mb-2">
+              <Clock className="w-3.5 h-3.5" /> Time&apos;s Up! Final Score
+            </span>
+          )}
+
+          <h2 className="text-2xl md:text-3xl font-black text-black mb-1">
+            {summaryData.timedOut ? "Time's Up!" : 'Memory Deck Cleared!'}
           </h2>
-          <p className="text-slate-500 text-sm mb-6">
-            Great memory practice! Your recall and accuracy are building up.
+          <p className="text-black/75 text-sm mb-5 font-medium">
+            Matched {summaryData.matchedPairs} of {summaryData.totalPairs} hidden pairs.
           </p>
 
-          <div className="grid grid-cols-3 gap-2 bg-slate-50 rounded-2xl p-4 mb-6 text-center">
+          <div className="bg-[#ffd400] border-2 border-black rounded-2xl p-4 mb-4">
+            <span className="text-xs font-black text-black uppercase tracking-wider block">
+              Final Score
+            </span>
+            <span className="text-3xl font-black text-black tabular-nums">
+              {summaryData.score} pts
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 bg-[#53b0c9]/20 border border-[#53b0c9] rounded-2xl p-4 mb-6 text-center">
             <div>
-              <span className="text-xs font-bold text-slate-500 block uppercase">Accuracy</span>
-              <span className="text-xl font-black text-slate-900 tabular-nums">
+              <span className="text-xs font-bold text-black/70 block uppercase">Accuracy</span>
+              <span className="text-xl font-black text-black tabular-nums">
                 {summaryData.accuracy}%
               </span>
             </div>
             <div>
-              <span className="text-xs font-bold text-slate-500 block uppercase">Time</span>
-              <span className="text-xl font-black text-slate-900 tabular-nums">
-                {summaryData.duration}s
+              <span className="text-xs font-bold text-black/70 block uppercase">Time</span>
+              <span className="text-xl font-black text-black tabular-nums">
+                {formatTimerClock(summaryData.duration)}
               </span>
             </div>
             <div>
-              <span className="text-xs font-bold text-slate-500 block uppercase">XP Earned</span>
-              <span className="text-xl font-black text-amber-500 tabular-nums">
+              <span className="text-xs font-bold text-black/70 block uppercase">XP Earned</span>
+              <span className="text-xl font-black text-[#f76400] tabular-nums">
                 +{summaryData.xp}
               </span>
             </div>
           </div>
 
           {summaryData.isFlawless && (
-            <div className="mb-6 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-bold flex items-center justify-center gap-2">
-              <Sparkles className="w-4 h-4 text-emerald-600" />
+            <div className="mb-6 p-3 bg-[#ffd400]/30 border-2 border-[#ffd400] rounded-xl text-black text-xs font-black flex items-center justify-center gap-2">
+              <Sparkles className="w-4 h-4 text-[#f76400]" />
               Flawless Memory Match! Zero Mismatches!
             </div>
           )}
@@ -413,19 +494,29 @@ export const MemoryLabGame: React.FC<MemoryLabGameProps> = ({
           <div className="flex gap-3 justify-center">
             <button
               onClick={initGame}
-              className="px-5 py-3 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 font-bold transition-colors"
+              className="px-5 py-3 rounded-xl border-2 border-black text-black hover:bg-[#ffd400]/25 font-black transition-colors cursor-pointer"
             >
-              Play Again
+              Play New Card Set
             </button>
             <button
               onClick={onExit}
-              className="px-6 py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold shadow-md transition-colors"
+              className="px-6 py-3 rounded-xl bg-[#7f27a8] hover:bg-[#c1008f] text-white font-black shadow-md transition-colors cursor-pointer"
             >
               Return to World
             </button>
           </div>
         </div>
       )}
+
+      <ConfettiOverlay show={showConfetti} onComplete={() => setShowConfetti(false)} />
+      <AmberFailureAlert
+        isOpen={showAmberAlert}
+        customMessage={amberMessage}
+        onRetry={() => {
+          setShowAmberAlert(false);
+          initGame();
+        }}
+      />
     </div>
   );
 };

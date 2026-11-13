@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Lock, X } from 'lucide-react';
+import { Lock, X } from 'lucide-react';
 import { getParentAccount } from '../../utils/storage';
 
 interface ParentGateModalProps {
@@ -8,6 +8,7 @@ interface ParentGateModalProps {
   onSuccess: () => void;
   title?: string;
   reason?: string;
+  expectedPin?: string;
 }
 
 export const ParentGateModal: React.FC<ParentGateModalProps> = ({
@@ -16,24 +17,30 @@ export const ParentGateModal: React.FC<ParentGateModalProps> = ({
   onSuccess,
   title = 'Parent Verification',
   reason = 'To switch profiles or view the parent dashboard, please enter your parent PIN.',
+  expectedPin,
 }) => {
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
   const [useMathChallenge, setUseMathChallenge] = useState(false);
   const [mathAnswer, setMathAnswer] = useState('');
 
-  // Generate a simple adult math challenge
-  const [num1] = useState(() => Math.floor(Math.random() * 6) + 6); // 6-11
-  const [num2] = useState(() => Math.floor(Math.random() * 8) + 6); // 6-13
+  const [num1] = useState(() => Math.floor(Math.random() * 6) + 6);
+  const [num2] = useState(() => Math.floor(Math.random() * 8) + 6);
   const expectedMathAnswer = num1 * num2;
 
   if (!isOpen) return null;
 
   const parent = getParentAccount();
+  const activePin = expectedPin || parent.pin || '1234';
+  const isCustomCloudPin = Boolean(expectedPin);
 
   const handlePinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (pin === parent.pin || pin === '1234') {
+    const isValid = isCustomCloudPin
+      ? pin === activePin
+      : pin === activePin || pin === '1234';
+
+    if (isValid) {
       setError(false);
       setPin('');
       onSuccess();
@@ -56,36 +63,36 @@ export const ParentGateModal: React.FC<ParentGateModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs font-child">
+      <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border-4 border-[#7f27a8] overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-50 border-b border-slate-200">
+        <div className="flex items-center justify-between px-6 py-4 bg-[#7f27a8] text-white border-b-2 border-black">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl bg-[#ffd400] text-black border border-black flex items-center justify-center">
               <Lock className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-slate-900">{title}</h3>
-              <p className="text-xs text-slate-500">Parent-Controlled Access Gate</p>
+              <h3 className="text-base font-extrabold text-white">{title}</h3>
+              <p className="text-xs text-white/90">Parent-Controlled Access Gate</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-200/50 transition-colors"
+            className="p-1.5 text-white hover:bg-white/20 rounded-lg transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Body */}
-        <div className="p-6">
-          <p className="text-sm text-slate-600 mb-5 leading-relaxed">{reason}</p>
+        <div className="p-6 text-black">
+          <p className="text-sm text-black font-medium mb-5 leading-relaxed">{reason}</p>
 
           {!useMathChallenge ? (
             <form onSubmit={handlePinSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
-                  Enter 4-Digit Parent PIN
+                <label className="block text-xs font-extrabold text-black uppercase tracking-wider mb-2">
+                  Enter Parent PIN
                 </label>
                 <input
                   type="password"
@@ -97,11 +104,17 @@ export const ParentGateModal: React.FC<ParentGateModalProps> = ({
                   }}
                   placeholder="••••"
                   autoFocus
-                  className="w-full px-4 py-3 text-center text-2xl tracking-[0.5em] font-mono border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-slate-900 focus:border-slate-900"
+                  className="w-full px-4 py-3 text-center text-2xl tracking-[0.5em] font-mono border-2 border-[#7f27a8] rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#53b0c9] text-black bg-white"
                 />
                 <div className="flex items-center justify-between mt-2">
-                  <span className="text-xs text-slate-500">
-                    Default demo PIN: <strong className="font-mono text-slate-700">1234</strong>
+                  <span className="text-xs text-black font-semibold">
+                    {isCustomCloudPin ? (
+                      'Enter your Guardian PIN'
+                    ) : (
+                      <>
+                        Default demo PIN: <strong className="font-mono text-[#7f27a8]">1234</strong>
+                      </>
+                    )}
                   </span>
                   <button
                     type="button"
@@ -109,7 +122,7 @@ export const ParentGateModal: React.FC<ParentGateModalProps> = ({
                       setUseMathChallenge(true);
                       setError(false);
                     }}
-                    className="text-xs text-teal-600 hover:text-teal-700 font-medium"
+                    className="text-xs text-[#c1008f] hover:text-[#7f27a8] font-extrabold cursor-pointer"
                   >
                     Solve math challenge instead
                   </button>
@@ -117,8 +130,10 @@ export const ParentGateModal: React.FC<ParentGateModalProps> = ({
               </div>
 
               {error && (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium">
-                  Incorrect PIN. Please try again or use the demo PIN (1234).
+                <div className="p-3 bg-[#c1008f] border-2 border-black rounded-xl text-xs text-white font-bold">
+                  {isCustomCloudPin
+                    ? 'Incorrect PIN. Please try again or solve the math challenge.'
+                    : 'Incorrect PIN. Please try again or use the demo PIN (1234).'}
                 </div>
               )}
 
@@ -126,22 +141,22 @@ export const ParentGateModal: React.FC<ParentGateModalProps> = ({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2.5 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors"
+                  className="px-4 py-2.5 text-sm font-bold text-black bg-[#e885cf]/40 hover:bg-[#e885cf] rounded-xl transition-colors cursor-pointer"
                 >
                   Stay in Child World
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors shadow-sm"
+                  className="px-5 py-2.5 text-sm font-extrabold text-black bg-[#ffd400] hover:bg-[#53b0c9] border-2 border-black rounded-xl transition-colors shadow-sm cursor-pointer"
                 >
-                  Verify & Proceed
+                  Verify &amp; Proceed
                 </button>
               </div>
             </form>
           ) : (
             <form onSubmit={handleMathSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
+                <label className="block text-xs font-extrabold text-black uppercase tracking-wider mb-2">
                   Parent Check: What is {num1} × {num2}?
                 </label>
                 <input
@@ -153,17 +168,17 @@ export const ParentGateModal: React.FC<ParentGateModalProps> = ({
                   }}
                   placeholder="Answer"
                   autoFocus
-                  className="w-full px-4 py-3 text-center text-xl font-mono border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-slate-900"
+                  className="w-full px-4 py-3 text-center text-xl font-mono border-2 border-[#7f27a8] rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#53b0c9] text-black bg-white"
                 />
                 <div className="flex items-center justify-between mt-2">
-                  <span className="text-xs text-slate-500">Safeguards child profiles</span>
+                  <span className="text-xs text-black font-semibold">Safeguards child profiles</span>
                   <button
                     type="button"
                     onClick={() => {
                       setUseMathChallenge(false);
                       setError(false);
                     }}
-                    className="text-xs text-teal-600 hover:text-teal-700 font-medium"
+                    className="text-xs text-[#c1008f] hover:text-[#7f27a8] font-extrabold cursor-pointer"
                   >
                     Use 4-digit PIN instead
                   </button>
@@ -171,7 +186,7 @@ export const ParentGateModal: React.FC<ParentGateModalProps> = ({
               </div>
 
               {error && (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium">
+                <div className="p-3 bg-[#c1008f] border-2 border-black rounded-xl text-xs text-white font-bold">
                   Calculation did not match. Please recalculate.
                 </div>
               )}
@@ -180,13 +195,13 @@ export const ParentGateModal: React.FC<ParentGateModalProps> = ({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2.5 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors"
+                  className="px-4 py-2.5 text-sm font-bold text-black bg-[#e885cf]/40 hover:bg-[#e885cf] rounded-xl transition-colors cursor-pointer"
                 >
                   Stay in Child World
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors shadow-sm"
+                  className="px-5 py-2.5 text-sm font-extrabold text-black bg-[#ffd400] hover:bg-[#53b0c9] border-2 border-black rounded-xl transition-colors shadow-sm cursor-pointer"
                 >
                   Confirm Parent
                 </button>

@@ -177,6 +177,14 @@ class SoundEngine {
       // AudioContext safe fail
     }
   }
+
+  public playMatch() {
+    this.playSuccess();
+  }
+
+  public playError() {
+    this.playGentleError();
+  }
 }
 
 export const soundEngine = new SoundEngine();
